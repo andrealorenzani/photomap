@@ -1,0 +1,41 @@
+.status-panel {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 1000;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  padding: 0.6rem 0.85rem;
+  font-size: 0.8rem;
+  max-width: 260px;
+}
+
+.status-panel__counts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.status-panel__progress {
+  margin-top: 0.4rem;
+  height: 6px;
+  background: #eee;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.status-panel__progress-bar {
+  height: 100%;
+  background: #2f7de1;
+  transition: width 0.15s ease-out;
+}
+
+.status-panel__warning {
+  margin-top: 0.5rem;
+  color: #8a1f11;
+  background: #fdecea;
+  border: 1px solid #f5c6cb;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+}

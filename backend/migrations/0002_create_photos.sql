@@ -1,0 +1,15 @@
+CREATE TABLE photos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id INT UNSIGNED NOT NULL,
+  storage_path VARCHAR(255) NOT NULL,
+  thumbnail_path VARCHAR(255) NOT NULL,
+  file_size_bytes INT UNSIGNED NOT NULL,
+  lat DECIMAL(9,6) NULL,
+  lon DECIMAL(9,6) NULL,
+  taken_at DATETIME NULL,
+  camera_make VARCHAR(255) NULL,
+  camera_model VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_photos_user_id (user_id),
+  CONSTRAINT fk_photos_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

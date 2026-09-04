@@ -1,0 +1,9 @@
+/vendor/
+.env
+.env.test
+/storage/photos/*
+/storage/thumbnails/*
+!/storage/photos/.gitkeep
+!/storage/thumbnails/.gitkeep
+/composer.lock.bak
+.phpunit.result.cache
