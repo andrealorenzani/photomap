@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import type { IngestStatus, PhotoRecord } from '../types';
-import { photoRepository } from '../lib/db';
+import { getActiveRepository, photoRepository } from '../lib/db';
 import { objectUrlCache } from '../lib/objectUrlCache';
+import { gridKey } from '../lib/grouping';
+import type { SearchFilters } from '../lib/filters';
 
 export interface DateRange {
   start: Date;
@@ -15,6 +17,7 @@ interface PhotoStoreState {
   status: IngestStatus;
   dateFilter: DateRange | null;
   selectedPhotoId: string | null;
+  searchFilters: SearchFilters;
 
   hydrateFromDB: () => Promise<void>;
   upsertPhoto: (record: PhotoRecord) => void;
@@ -24,6 +27,21 @@ interface PhotoStoreState {
   clearAll: () => Promise<void>;
   setStatus: (patch: Partial<IngestStatus>) => void;
   resetIngestCounters: (total: number) => void;
+  setSearchFilters: (filters: SearchFilters) => void;
+  /**
+   * Moves a store entry from a client-generated optimistic id to the server-assigned final id
+   * returned by `PhotoRepository.add()` (account mode only — guest mode's id never changes).
+   * Removes the old Map entry, inserts the new one, and updates selectedPhotoId if it referenced
+   * the old id.
+   */
+  reconcileId: (oldId: string, newRecord: PhotoRecord) => void;
+  /**
+   * Drag-to-reassign a photo's location (works in both modes via
+   * `getActiveRepository().updateLocation()`). Optimistically updates in-memory state; rolls
+   * back to the prior record/counts if the repository call fails (e.g. a 404/422 in account
+   * mode), so a rejected location is never silently shown as accepted.
+   */
+  reassignLocation: (id: string, lat: number, lon: number) => Promise<void>;
 }
 
 const initialStatus: IngestStatus = {
@@ -33,6 +51,7 @@ const initialStatus: IngestStatus = {
   withoutGPS: 0,
   skipped: 0,
   parsing: false,
+  uploadFailures: 0,
 };
 
 export const usePhotoStore = create<PhotoStoreState>((set, get) => ({
@@ -40,6 +59,7 @@ export const usePhotoStore = create<PhotoStoreState>((set, get) => ({
   status: { ...initialStatus },
   dateFilter: null,
   selectedPhotoId: null,
+  searchFilters: {},
 
   hydrateFromDB: async () => {
     const records = await photoRepository.list();
@@ -120,4 +140,50 @@ export const usePhotoStore = create<PhotoStoreState>((set, get) => ({
     set((state) => ({
       status: { ...state.status, total: state.status.total + total, parsing: true },
     })),
+
+  setSearchFilters: (filters) => set({ searchFilters: filters }),
+
+  reconcileId: (oldId, newRecord) => {
+    set((state) => {
+      if (!state.photos.has(oldId)) return {};
+      const photos = new Map(state.photos);
+      photos.delete(oldId);
+      photos.set(newRecord.id, newRecord);
+      const selectedPhotoId =
+        state.selectedPhotoId === oldId ? newRecord.id : state.selectedPhotoId;
+      return { photos, selectedPhotoId };
+    });
+  },
+
+  reassignLocation: async (id, lat, lon) => {
+    const prior = get().photos.get(id);
+    if (!prior) return;
+
+    set((state) => {
+      const existing = state.photos.get(id);
+      if (!existing) return {};
+      const photos = new Map(state.photos);
+      photos.set(id, { ...existing, lat, lon, hasGPS: true, groupKey: gridKey(lat, lon) });
+      const withGPS = existing.hasGPS ? state.status.withGPS : state.status.withGPS + 1;
+      const withoutGPS = existing.hasGPS
+        ? state.status.withoutGPS
+        : Math.max(0, state.status.withoutGPS - 1);
+      return { photos, status: { ...state.status, withGPS, withoutGPS } };
+    });
+
+    try {
+      await getActiveRepository().updateLocation(id, lat, lon);
+    } catch (err) {
+      // Roll back to the exact prior record/counts — a rejected location is never silently
+      // shown as accepted.
+      set((state) => {
+        const photos = new Map(state.photos);
+        photos.set(id, prior);
+        const withGPS = prior.hasGPS ? state.status.withGPS : Math.max(0, state.status.withGPS - 1);
+        const withoutGPS = prior.hasGPS ? state.status.withoutGPS : state.status.withoutGPS + 1;
+        return { photos, status: { ...state.status, withGPS, withoutGPS } };
+      });
+      throw err;
+    }
+  },
 }));

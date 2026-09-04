@@ -235,3 +235,161 @@ Advisor review raised additional concerns, all resolved before implementation:
 25. **GD WebP support not guaranteed** — resolved with a runtime `function_exists('imagecreatefromwebp')` check and a graceful `webp_unsupported` rejection instead of a crash, documented in the README's prerequisites.
 26. **Naming inconsistencies between architecture/code sections** — reconciled to one authoritative name/path each (`MAX_UPLOAD_BYTES`, `storage/thumbnails/`, `backend/scripts/migrate.php`).
 27. **No session-status endpoint** — added `GET /api/me`.
+
+---
+
+# Photomap Phase 3 — Account Wiring, Deployment/Operability, and Treasure-Map Style - 2026-09-04 19:13 BST
+
+## Context of the changes
+
+Photomap's value proposition is letting someone drop a folder of their own photos onto a map and timeline and immediately see *where* and *when* they were taken. Phase 1 (guest mode, fully client-side) and Phase 2 (a standalone PHP+MySQL accounts backend) are both already built, tested, and documented, but are currently two unconnected projects — a live user today only ever experiences guest mode. This change is Phase 3: it wires the two together, plus three cross-cutting requirements the project owner gave directly (Node-free static deployability, a one-command Docker path, and a fully externalized/documented configuration surface), plus a new opt-in "treasure map" basemap style.
+
+This change request is one coherent unit of work spanning previously-separate docs concerns (photomap_prompt.md's Phase 3 text, the project owner's direct deployment/ops requirements, and the treasure-map feature) and is planned and implemented together, since they share touchpoints (the map component gets both the account-mode data-source switch and the style toggle; the frontend build gets both the API-base-URL externalization and the Docker packaging).
+
+**What this means for users, by mode.**
+
+Guest mode gets no behavioral regression — the new map-style toggle (Detailed/Treasure Map) applies equally in guest mode since it's a pure rendering change to the same OSM tile layer guest mode already uses, with no new network dependency and no photo-data implication; the persistent "your photos never leave this device" guarantee is unaffected. Filter/search by date range, camera make/model, has-location, and drag-to-reassign a marker's location for GPS-less photos ship in **both modes** (see Deep Dives #1) — guest mode via the existing `PhotoRepository.updateLocation()` seam already built in Phase 1, account mode via the new `PATCH /api/photos/{id}` endpoint.
+
+Account mode is where the bulk of user-facing change lands: the top banner becomes real (login/register, then account email + copy-share-link + delete-account), uploads and listing switch to the backend when logged in, and a persistent "your photos are stored on the server" notice is visible for the whole duration of an authenticated session (see Deep Dives #11), distinct from the guest privacy note. The new `/share/{token}` public route lets a link recipient view a read-only map with zero upload/delete/login affordances (filters and the map-style toggle remain available to share viewers — both are non-mutating; see Deep Dives #2). Drag-to-reassign in account mode calls the new `PATCH /api/photos/{id}` endpoint, activating work Phase 2 deliberately deferred here, following the same auth/ownership/CSRF conventions as the sibling endpoints (404-not-403 on mismatched ownership, `X-CSRF-Token`, session auth).
+
+**Deployment/operability requirements — framing.** These elevate Docker from "dev/test convenience only" (Phase 2's explicit framing) to a first-class, clearly-labeled *local-use* path, while making explicit for the first time that the frontend's production artifact is plain static files deployable to any PHP+MySQL host with zero Node process running — Node/npm remain build-time-only tooling, exactly as today (`npm run build` → `dist/`). These are two distinct, separately-documented paths, not a replacement of one by the other. The account-mode private-storage/signed-URL property (photos live outside the web root, served only via time-limited signed URLs) is a Phase 2-built security property that must be verified as a non-regression after this change's wiring, and stated in the README as an explicit security/privacy property, not just an implementation footnote. The "every setting customizable" requirement extends Phase 2's existing `.env`-driven pattern to the frontend (API base URL, map tile/style settings) and documents every setting in one consolidated root README.
+
+**Treasure Map style — product framing.** This satisfies the project owner's stated want (a "less fine grained map but with a better look, like a treasure map") without a new external tile provider/API key: the same OSM Web Mercator tiles, under a CSS filter, with a hard zoom cap. A photo pin lands in the identical place in both styles — only rendering and available zoom range differ. Default is "Detailed" (today's unchanged behavior); "Treasure Map" is purely additive/opt-in. One nuance worth surfacing in the README/UI copy: because the zoom cap is hard, a dense marker cluster in Treasure Map mode can't be zoomed in far enough to visually separate the way Detailed mode allows — inherent to the feature as specified, not a bug.
+
+**Scope/priority note.** Per photomap_prompt.md's own text, trip auto-grouping / route lines / GeoJSON-KML export / heatmap-density mode remain explicitly lower-priority "if time allows" items, not required for sign-off. The core Phase 3 wiring, the deployment/ops requirements, and the treasure-map feature are the hard bar for this change. These nice-to-haves were NOT implemented in this change (see implementer's report).
+
+## Architectural Impact
+
+Frontend (`src/`) and backend (`backend/`) are today two fully unconnected projects. Confirmed against the actual code: `TopBanner.tsx` is exactly the disabled placeholder the docs describe; `PhotoRepository` (in `src/lib/db/photoRepository.ts`) already declares `updateLocation(id, lat, lon)` and `IndexedDbPhotoRepository` already implements it — this seam was pre-built in Phase 1 specifically for this moment. `photoRepository` today is a **module-level singleton** imported directly by `photoStore.ts` and `App.tsx`; this singleton must become swappable at runtime (guest vs. account), which is one of the non-additive changes to existing Phase 1 code this plan makes. `backend/src/Routing/Router.php` already has a `patch()` method wired but unused — no backend routing gap to fill. `backend/src/Session.php` hardcodes `SameSite=Lax`; `backend/src/Bootstrap.php` has no CORS handling anywhere (Phase 2 never needed it). `MapView.tsx` hardcodes a single OSM tile layer with no style abstraction — the treasure-map toggle is a genuinely new piece, not an extension of an existing seam. No routing library exists in the frontend today (single page only).
+
+### Frontend: auth state, repository swap, and routing
+
+Two routes are needed: the main app (`/`) and the public read-only `/share/{token}`. Per Deep Dives #3, this is a small hand-rolled path matcher (not a new `react-router-dom` dependency), consistent with the project's own established minimal-dependency posture (the backend's hand-rolled router is explicitly documented as "consistent with the project's minimal-dependency posture," and only two routes with very different rendering needs are required here). This requires the static host to serve `index.html` for `/share/*` paths (standard SPA-fallback rewrite: Apache `.htaccess`/`FallbackResource`, nginx `try_files`, built into the Docker nginx config) — documented per deployment path in the README (Deep Dives #4).
+
+A new `src/state/authStore.ts` holds `{ user: {email} | null, status: 'idle'|'checking'|'authenticated'|'guest' }`, hydrated on app load via `GET /api/me`. `lib/db/index.ts` changes from exporting a fixed `IndexedDbPhotoRepository` instance to exposing `getActiveRepository()`/`setActiveRepository()` around a module-level `let active: PhotoRepository`; the existing exported `photoRepository` constant becomes a thin proxy delegating to `getActiveRepository()` at call time, so `photoStore.ts`, `objectUrlCache.ts`, and `App.tsx` need no call-site changes. `ingest/index.ts` needs one small, necessary change (see Deep Dives #14 — an advisor-flagged fix): `PhotoRepository.add()`'s signature changes from `Promise<void>` to `Promise<PhotoRecord>`, returning the persisted record with its final id. `ingest/index.ts` awaits this after its existing optimistic `upsertPhoto()` call and, if the returned id differs from the client-generated stable-hash id it optimistically used, calls a new store action `reconcileId(oldId, newRecord)` that removes the old Map entry and inserts the new one under the server-assigned id. Only `authStore.ts` calls `setActiveRepository()`, on login/logout.
+
+`ApiPhotoRepository` implements the same `PhotoRepository` interface against `GET/POST/DELETE/PATCH /api/photos`, backed by a small `src/lib/api/http.ts` client that fetches `GET /api/csrf-token` once per session and attaches `X-CSRF-Token` on every mutating call, uses `credentials: 'include'` throughout, and surfaces `413 quota_exceeded`/`422` errors distinctly (mirroring the existing `StorageQuotaExceededError` pattern).
+
+`TopBanner.tsx` becomes stateful: login/register forms → account email + "copy share link" (`POST /api/share-links`) + "delete account" (`DELETE /api/account`, then logout + revert to guest repository). A new persistent notice component (parallel to `PrivacyNote.tsx`) shows the "uploaded photos are stored on the server..." text for the whole duration of an authenticated session.
+
+`/share/{token}` renders a separate, isolated read-only tree: `GET /api/share/{token}` populates local component state (not the global Zustand store's photo data — photo bytes/records stay local to `SharePage`, though it does share the global store's incidental UI-only slots like `selectedPhotoId`/`dateFilter`, since only one route is ever mounted at a time; see implementer's deviation notes). `MapView`/`TimelineStrip`/`PhotoThumbStrip`/`FullSizeViewer` gain two new optional props, `photos?: PhotoRecord[]` and `readOnly?: boolean` — when `photos` is supplied they use it instead of the global store; when `readOnly` is true they omit delete buttons and disable marker dragging. The existing store-backed usage in `App.tsx` passes neither prop, so guest/account-mode behavior is unchanged.
+
+Filter/search (date range, camera make/model, has-location) extends the store with a `searchFilters` slice, orthogonal to the existing timeline-click `dateFilter` (which continues to drive click-to-open-thumbnail-strip unchanged); both compose (search narrows the base set the timeline itself is built from).
+
+Drag-to-reassign needs a new interaction on `MapView.tsx`: a drop target on the map container (translating a drop point to lat/lon via `map.containerPointToLatLng`) for GPS-less photos dragged from a new `UnlocatedPhotosPanel`, plus `draggable: true` markers with a `dragend` handler for repositioning existing markers — both funnel into a `reassignLocation(id, lat, lon)` store action that calls `getActiveRepository().updateLocation()`. Disabled when `readOnly`.
+
+### Treasure-map style toggle
+
+A new `src/lib/mapStyles.ts` config module defines two presets (`detailed`, `treasure`) sourced from `VITE_MAP_*` env vars (with a runtime override layer). Both presets default to the same OSM tile source — coordinates always line up identically, no new tile provider. Switching styles replaces the active `L.tileLayer` (never mutates the existing photo markers/data). A small on-map `MapStyleToggle` control switches presets; default is Detailed, choice persisted to `localStorage` only (Deep Dives #10).
+
+### Backend: new endpoint, CORS, and the session-cookie cross-origin question
+
+`PATCH /api/photos/{id}` follows `DELETE /api/photos/{id}`'s exact conventions: `AuthMiddleware` + `CsrfMiddleware`, ownership resolved server-side from the session, mismatched ownership → `404` not `403`. Allowed for any photo, not restricted to currently-GPS-less ones (Deep Dives #12).
+
+New CORS support: a `CorsMiddleware` reading an allow-list from `CORS_ALLOWED_ORIGINS`, handling `OPTIONS` preflight before auth/CSRF middleware run, `Access-Control-Allow-Credentials: true` with exact-match echoed origin (never `*`, never substring/suffix matching). `Session.php`'s `samesite` becomes configurable (`SESSION_COOKIE_SAMESITE`, default `Lax`, unchanged for same-origin deployments). Both the local dev path (Vite proxy) and the Docker path (nginx proxy) are same-origin by design and never need these — they only matter for a genuinely split-origin static-host-plus-separate-backend production deployment (Deep Dives #6).
+
+Private storage (signed URLs, `storage/` outside the web root) is unaffected — `PATCH` only touches the `photos` row, never file paths; `MediaController`/`SignedUrl` are untouched.
+
+### API base URL configurability
+
+A small runtime `public/config.js` (`window.__PHOTOMAP_CONFIG__ = { apiBaseUrl: "..." }`, loaded via a `<script>` tag in `index.html` before the bundle) is layered over build-time `VITE_API_BASE_URL`/`VITE_MAP_*` defaults (Deep Dives #5). In the Docker all-in-one path this defaults to a same-origin relative `/api` (nginx proxies it).
+
+## Code changes (as implemented — see implementer's report below for exact file list and any deviations)
+
+### 1. Backend: `PATCH /api/photos/{id}`
+`backend/src/Repositories/PhotoRepository.php` (`updateLocation()`), `backend/src/Controllers/PhotosController.php` (`update()`), `backend/src/Bootstrap.php` (route registration), new `backend/tests/Feature/PhotoUpdateFeatureTest.php`. Removed "PATCH not implemented" limitation lines from backend/README.md, docs/architecture.md, docs/code.md.
+
+### 2. Backend: CORS + configurable cookie SameSite
+New `CORS_ALLOWED_ORIGINS`/`SESSION_COOKIE_SAMESITE` env vars, `backend/src/Session.php` updated, new `backend/src/Middleware/CorsMiddleware.php` (exact-match origin allow-list only), `backend/.env.example` documents both, new `backend/tests/Feature/CorsFeatureTest.php`.
+
+### 3. Frontend: API client + auth state
+New `src/lib/config.ts`, `public/config.js`, `src/lib/api/http.ts`, `src/lib/api/{authApi,photosApi,shareLinksApi,accountApi,shareApi}.ts`, new `src/state/authStore.ts`.
+
+### 4. Frontend: swappable `PhotoRepository`, including client/server-id reconciliation
+`src/lib/db/photoRepository.ts`/`index.ts` — `getActiveRepository()`/`setActiveRepository()`, proxy pattern. `PhotoRepository.add()` signature changed `Promise<void>` → `Promise<PhotoRecord>`. New `src/lib/db/apiPhotoRepository.ts`. `src/lib/ingest/index.ts` updated for id reconciliation (`reconcileId` store action) and surfacing non-quota upload errors instead of swallowing them.
+
+### 4a. Frontend: EXIF orientation correction fix
+`src/workers/exifWorker.ts` — orientation-aware thumbnail/preview generation (`createImageBitmap(..., {imageOrientation:'from-image'})` with manual canvas-transform fallback for orientations 2-8). This fixes a previously-documented Phase 1 characteristic ("no EXIF-orientation-based pixel rotation applied") for BOTH guest and account mode — update docs/code.md accordingly (the old bullet is now stale/incorrect).
+
+### 5. Frontend: login/register banner, account controls, upload notice
+`src/components/TopBanner.tsx` rewritten (functional login/register/logout/copy-share-link/delete-account). `src/App.tsx` calls `authStore.restoreSession()`. New `src/components/AccountNotice.tsx`. `src/components/PrivacyNote.tsx` now hidden when authenticated (mutually exclusive with AccountNotice).
+
+### 6. Frontend: public `/share/{token}` route
+New hand-rolled `src/Router.tsx` (two routes: `/` and `/share/:token`, per Deep Dives #3 — NOT react-router-dom). New `src/pages/SharePage.tsx`. `src/main.tsx`/`src/App.tsx` wired to the router.
+
+### 7. Frontend: filter/search
+New `src/lib/filters.ts`, `src/components/FilterBar.tsx`. `photoStore.ts` gained a `searchFilters` slice.
+
+### 8. Frontend: drag-to-reassign location
+New `src/components/UnlocatedPhotosPanel.tsx`. `MapView.tsx` gained drop-target handling and draggable markers, funneling into a new `reassignLocation` store action (optimistic update + rollback-on-error).
+
+### 9. Frontend: treasure-map basemap style toggle
+New `src/lib/mapStyles.ts` (`detailed` maxZoom 19 unchanged; `treasure` maxZoom 10, CSS filter `sepia(0.65) saturate(1.6) hue-rotate(-8deg) contrast(1.1)` + vignette, both config-driven via `VITE_MAP_*` env vars). `MapView.tsx`/`.css` updated. New `src/components/MapStyleToggle.tsx` (default `detailed`, persisted to `localStorage`).
+
+### 10. Build-time-configurable API base URL, Node-free static deploy
+`vite.config.ts` dev proxy (`/api` → `http://localhost:8000` by default). Root `.env.example` (new). `npm run build` → `dist/` confirmed static-only (no Node entry point) by the implementer.
+
+### 11. Docker: whole-stack local compose
+New root `docker-compose.yml` (mysql + backend + frontend services), new `docker/frontend/Dockerfile` (multi-stage: `node:20-alpine` build → `nginx:alpine` serve), new `docker/frontend/nginx.conf` (SPA fallback + `/api/` reverse proxy to backend, same-origin). Existing `backend/docker-compose.yml` left as-is (backend-only dev/test convenience). Verified live end-to-end by the implementer (see report).
+
+### 12. Storage privacy confirmation
+No regression — confirmed by the implementer; `PATCH` only touches the `photos` row, never file paths.
+
+### 13. README restructuring
+Root `README.md` rewritten as the main entry point (what Photomap is, both modes, Docker quick start, dev setup, production deploy, env-var reference tables, private-storage/signed-URL property, privacy notes, known limitations). `backend/README.md` stays as the lower-level backend-only reference, updated with the PATCH endpoint row and CORS section.
+
+### 14. Nice-to-haves
+NOT implemented in this change (GeoJSON/KML export, heatmap mode, trip auto-grouping, route lines) — explicitly lower priority per the original request, deferred.
+
+## Testing information (as executed — see implementer's report for full results)
+Frontend: Vitest suite extended substantially (new tests for `ApiPhotoRepository`, id reconciliation, CSRF lifecycle, rewritten `TopBanner` tests, mode-switching, `/share/{token}` routing, filters, drag-to-reassign, map style toggle, EXIF orientation, build/deploy checks). Backend: PHPUnit extended with `PhotoUpdateFeatureTest`, `CorsFeatureTest`; full existing suite rerun; `scripts/smoke-test.sh` extended with a PATCH step. Docker compose verified live end-to-end. See implementer's report below for exact counts and results.
+
+# Deep Dives
+
+**Q1 (product owner): Should filter/search (date range, camera make/model, has-location) and drag-to-reassign ship for guest mode too, or account-mode only?**
+A: Both modes. Grounded in photomap_prompt.md's own Phase 3 text ("Add remaining 'core' features from the original spec, now that both modes exist") and the fact that Phase 1's `PhotoRepository` interface already includes `updateLocation()`, built specifically for this purpose.
+
+**Q2 (product owner): Should the public `/share/{token}` view also expose filter/search and the map-style toggle, or be strictly minimal?**
+A: Filters and the Detailed/Treasure-Map toggle remain available to share viewers — both are non-mutating/read-only-safe. Drag-to-reassign, upload, delete, and login/register remain excluded, per the explicit "no upload/delete/login affordances" requirement.
+
+**Q3 (architect/developer/tester, consolidated — routing mechanism for `/share/{token}`): react-router-dom or hand-rolled?**
+A: A small hand-rolled path matcher (two routes only). Resolved a genuine disagreement between the architect briefing (hand-rolled, citing the project's minimal-dependency posture) and the developer briefing (proposed react-router-dom), in favor of hand-rolled: directly grounded in an existing documented architecture decision (the backend's hand-rolled router is explicitly called out in docs/architecture.md as "consistent with the project's minimal-dependency posture").
+
+**Q4 (architect): `/share/{token}` as a literal path route (needs SPA-fallback rewrite) vs. a hash-based route?**
+A: Literal path route, matching the original spec's own wording. SPA-fallback rewrite documented per deployment path (nginx `try_files` built into the Docker config; Apache `.htaccess`/`FallbackResource` documented for plain hosting).
+
+**Q5 (architect/developer, consolidated): Runtime-configurable API base URL (`public/config.js`) vs. purely build-time `VITE_API_BASE_URL`?**
+A: Runtime `public/config.js`, layered over build-time defaults — still a 100% static file, and the only way to satisfy "same static build, different backend, no rebuild."
+
+**Q6 (architect/developer/tester, consolidated): Cross-origin cookie/CORS strategy — how much automated coverage, and is changing `Session.php` acceptable?**
+A: `Session.php`'s `SameSite` becomes configurable (default unchanged: `Lax`), plus a new opt-in `CorsMiddleware`/`CORS_ALLOWED_ORIGINS`. Dev proxy and Docker nginx proxy are both same-origin by design and never touch this. Automated coverage is documented + header/config-level tests only; live two-real-origin cookie behavior is a manual/staging concern.
+
+**Q7 (architect/developer, consolidated): Should logging in migrate/upload existing guest-mode IndexedDB photos into the new account?**
+A: No — out of scope for this phase. Guest and account data remain two separate namespaces. Documented as a known limitation.
+
+**Q8 (tester): Should filter/search be client-side only or add server-side query-param filtering?**
+A: Client-side only, filtering the already-fetched full list.
+
+**Q9 (architect/developer, consolidated): Treasure Map's exact zoom cutoff and CSS filter recipe?**
+A: Locked as `maxZoom: 10` and CSS filter `sepia(0.65) saturate(1.6) hue-rotate(-8deg) contrast(1.1)` plus a subtle inset vignette, both config-driven.
+
+**Q10 (developer/tester, consolidated): Should the map style choice persist per-browser only, or sync to the account across devices?**
+A: `localStorage` only for this phase.
+
+**Q11 (tester): Should the "logged in, stored on server" notice track "seen" state, or something simpler?**
+A: Rendered as a persistent, non-dismissible banner for the entire duration of an authenticated session — trivially satisfies "before the first upload."
+
+**Q12 (tester): Should `PATCH /api/photos/{id}` be restricted to only currently-GPS-less photos?**
+A: Allowed for any photo — strictly more useful, consistent with other photo endpoints' unrestricted-within-ownership design.
+
+**Q13 (developer/tester, consolidated): Should `ApiPhotoRepository`'s `estimateUsage()`/`requestPersistence()` no-op, or should the interface be adjusted?**
+A: No-op — both are IndexedDB-specific concepts meaningless for server storage; the quota is surfaced reactively via `413 quota_exceeded`.
+
+**Q14 (advisor): Client-generated vs. server-assigned photo IDs were never reconciled in the plan's original draft — how resolved?**
+A: `PhotoRepository.add()`'s signature changed from `Promise<void>` to `Promise<PhotoRecord>`, returning the persisted record with its final id. `ingest/index.ts` reconciles the store entry via a new `reconcileId(oldId, newRecord)` action if the id changed (guest mode: unchanged; account mode: backend's `AUTO_INCREMENT` id replaces the client-generated stable hash).
+
+**Q15 (advisor): Should the backend's EXIF-orientation correction, fed an already-recompressed EXIF-stripped preview, be fixed or documented as a limitation?**
+A: Fixed — `exifWorker.ts` now applies orientation correction when generating the thumbnail/preview canvas images, benefiting both modes and removing what would otherwise become a permanent, server-persisted data-quality bug in account mode.
+
+**Q16 (advisor, minor): CORS allow-list matching precision and test coverage.**
+A: Exact string equality only (no substring/suffix matching); dedicated test asserts no `Access-Control-Allow-Origin` header at all for a non-matching/near-miss origin.

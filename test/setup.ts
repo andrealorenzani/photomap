@@ -34,3 +34,14 @@ if (typeof HTMLCanvasElement !== 'undefined') {
     return null;
   }) as typeof HTMLCanvasElement.prototype.getContext;
 }
+
+// jsdom doesn't implement URL.createObjectURL/revokeObjectURL. objectUrlCache uses these to
+// turn photo blobs into <img src> values; tests that exercise real blob fetches (e.g. the share
+// view, which fetches signed-URL image bytes) need a working stand-in.
+let objectUrlCounter = 0;
+if (typeof URL.createObjectURL !== 'function') {
+  URL.createObjectURL = (() => `blob:mock-${++objectUrlCounter}`) as typeof URL.createObjectURL;
+}
+if (typeof URL.revokeObjectURL !== 'function') {
+  URL.revokeObjectURL = (() => {}) as typeof URL.revokeObjectURL;
+}

@@ -19,7 +19,7 @@ function photo(id: string, hasGPS: boolean): PhotoRecord {
 function resetStore() {
   usePhotoStore.setState({
     photos: new Map(),
-    status: { total: 0, processed: 0, withGPS: 0, withoutGPS: 0, skipped: 0, parsing: false },
+    status: { total: 0, processed: 0, withGPS: 0, withoutGPS: 0, skipped: 0, parsing: false, uploadFailures: 0 },
     dateFilter: null,
     selectedPhotoId: null,
   });

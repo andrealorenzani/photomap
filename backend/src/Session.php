@@ -23,7 +23,12 @@ final class Session
             // receive Secure cookies at all, so this is a documented dev-only exception.
             'secure' => Config::isProduction(),
             'httponly' => true,
-            'samesite' => 'Lax',
+            // Configurable for a genuinely split-origin deployment (see CorsMiddleware):
+            // cross-site fetch() calls don't send SameSite=Lax cookies at all, so a
+            // split-origin production deployment needs SameSite=None (only usable over HTTPS,
+            // i.e. also requires APP_ENV=production so Secure is set). Same-origin deployments
+            // (dev proxy, Docker) never need to change this from the Lax default.
+            'samesite' => Config::get('SESSION_COOKIE_SAMESITE', 'Lax'),
         ]);
 
         session_start();

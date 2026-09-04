@@ -9,6 +9,23 @@
   height: 100%;
 }
 
+/* Treasure Map style: the same OSM tiles under a CSS filter, config-driven via a custom
+   property set from JS (src/lib/mapStyles.ts). A photo pin lands in the identical place in both
+   styles — only rendering (this filter) and the tile layer's maxZoom differ. */
+.map-view__map--treasure {
+  filter: var(--map-treasure-filter, sepia(0.65) saturate(1.6) hue-rotate(-8deg) contrast(1.1));
+  position: relative;
+}
+
+.map-view__map--treasure::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+  box-shadow: inset 0 0 min(18vw, 220px) rgba(60, 40, 10, 0.45);
+}
+
 .map-view__empty-hint {
   position: absolute;
   bottom: 1rem;

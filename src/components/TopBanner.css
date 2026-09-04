@@ -5,6 +5,8 @@
   padding: 0.5rem 1rem;
   background: #1f2933;
   color: #fff;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .top-banner__brand {
@@ -17,10 +19,52 @@
   display: flex;
   gap: 0.5rem;
   align-items: center;
-  opacity: 0.6;
+  flex-wrap: wrap;
 }
 
 .top-banner__auth input,
 .top-banner__auth button {
-  cursor: not-allowed;
+  font-size: 0.85rem;
+}
+
+.top-banner__mode-switch {
+  background: none;
+  border: none;
+  color: #8ecfff;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.top-banner__error {
+  color: #ff9b9b;
+  font-size: 0.8rem;
+}
+
+.top-banner__account {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.top-banner__email {
+  font-weight: 600;
+}
+
+.top-banner__delete {
+  color: #ff9b9b;
+}
+
+.top-banner__confirm-delete {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #ffd27a;
+}
+
+.top-banner__share-status {
+  font-size: 0.75rem;
+  color: #b6f2b6;
 }

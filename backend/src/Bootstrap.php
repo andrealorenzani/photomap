@@ -102,6 +102,7 @@ final class Bootstrap
         $router->delete('/api/account', [$accountController, 'destroy'], [$auth, $csrf]);
         $router->post('/api/photos', [$photosController, 'store'], [$auth, $csrf]);
         $router->delete('/api/photos/{id}', [$photosController, 'destroy'], [$auth, $csrf]);
+        $router->patch('/api/photos/{id}', [$photosController, 'update'], [$auth, $csrf]);
         $router->post('/api/share-links', [$shareLinksController, 'store'], [$auth, $csrf]);
         $router->delete('/api/share-links/{id}', [$shareLinksController, 'destroy'], [$auth, $csrf]);
 

@@ -154,6 +154,45 @@ final class PhotosController
         return new JsonResponse(['ok' => true]);
     }
 
+    public function update(Request $request): JsonResponse
+    {
+        $userId = (int) $_SESSION['user_id'];
+        $id = (int) $request->routeParam('id');
+
+        $photo = $this->photos->find($id);
+        if ($photo === null || (int) $photo['user_id'] !== $userId) {
+            return JsonResponse::error('not_found', 'Photo not found.', 404);
+        }
+
+        $body = $request->json();
+        $latRaw = $body['lat'] ?? null;
+        $lonRaw = $body['lon'] ?? null;
+
+        if ($latRaw === null || $lonRaw === null) {
+            return JsonResponse::error('invalid_coordinates', 'Both lat and lon are required.', 422);
+        }
+
+        if (!is_numeric($latRaw) || !is_numeric($lonRaw)) {
+            return JsonResponse::error('invalid_coordinates', 'lat/lon must be numeric.', 422);
+        }
+
+        $lat = (float) $latRaw;
+        $lon = (float) $lonRaw;
+
+        if ($lat < -90 || $lat > 90 || $lon < -180 || $lon > 180) {
+            return JsonResponse::error('invalid_coordinates', 'lat/lon out of range.', 422);
+        }
+
+        // Only lat/lon are ever read from the body above — any other fields present (e.g. a
+        // client-supplied user_id/storage_path) are simply never looked at, so there is no
+        // mass-assignment vector here regardless of what the request body contains.
+        $this->photos->updateLocation($id, $userId, $lat, $lon);
+
+        $updated = $this->photos->find($id);
+
+        return new JsonResponse($this->presenter->toOwnerJson($updated));
+    }
+
     /**
      * @return array{0: ?float, 1: ?float, 2: ?JsonResponse}
      */

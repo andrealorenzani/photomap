@@ -1,0 +1,30 @@
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.4rem 1rem;
+  background: #f2f4f7;
+  border-bottom: 1px solid #ddd;
+  font-size: 0.8rem;
+}
+
+.filter-bar label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.filter-bar select,
+.filter-bar input[type='date'] {
+  font-size: 0.8rem;
+}
+
+.filter-bar__clear {
+  font-size: 0.8rem;
+  background: none;
+  border: 1px solid #999;
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}

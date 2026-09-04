@@ -9,7 +9,15 @@ import { getDB } from './schema';
  */
 export interface PhotoRepository {
   list(): Promise<PhotoRecord[]>;
-  add(record: PhotoRecord, blobs?: { thumbnail?: Blob; preview?: Blob }): Promise<void>;
+  /**
+   * Persists a photo record (and optional derived-image blobs). Returns the persisted record
+   * with its *final* id — for IndexedDB this is always the same id it was given (the client's
+   * stable hash is the durable key); for the account-mode ApiPhotoRepository this is the
+   * backend's AUTO_INCREMENT id, which differs from the client-generated id the caller
+   * optimistically used. Callers that optimistically inserted under the original id must
+   * reconcile if the returned id differs (see `ingest/index.ts`'s `reconcileId` handling).
+   */
+  add(record: PhotoRecord, blobs?: { thumbnail?: Blob; preview?: Blob }): Promise<PhotoRecord>;
   remove(id: string): Promise<void>;
   updateLocation(id: string, lat: number, lon: number): Promise<void>;
   getBlob(id: string, kind: 'thumbnail' | 'preview'): Promise<Blob | undefined>;
@@ -39,7 +47,7 @@ export class IndexedDbPhotoRepository implements PhotoRepository {
     return db.getAll('photoMeta');
   }
 
-  async add(record: PhotoRecord, blobs?: { thumbnail?: Blob; preview?: Blob }): Promise<void> {
+  async add(record: PhotoRecord, blobs?: { thumbnail?: Blob; preview?: Blob }): Promise<PhotoRecord> {
     const db = await getDB();
     try {
       await db.put('photoMeta', record);
@@ -50,6 +58,9 @@ export class IndexedDbPhotoRepository implements PhotoRepository {
           preview: blobs.preview,
         });
       }
+      // The IndexedDB key is already the durable id (the client's stable hash) — no
+      // reconciliation is ever needed for guest mode.
+      return record;
     } catch (err) {
       if (isQuotaExceeded(err)) {
         throw new StorageQuotaExceededError();
@@ -99,4 +110,33 @@ export class IndexedDbPhotoRepository implements PhotoRepository {
   }
 }
 
-export const photoRepository: PhotoRepository = new IndexedDbPhotoRepository();
+let active: PhotoRepository = new IndexedDbPhotoRepository();
+
+/** Returns whichever repository is currently active (guest IndexedDB or account-mode API). */
+export function getActiveRepository(): PhotoRepository {
+  return active;
+}
+
+/**
+ * Swaps the active repository (called only by `authStore.ts`, on login/session-restore ->
+ * ApiPhotoRepository, and on logout -> a fresh IndexedDbPhotoRepository).
+ */
+export function setActiveRepository(repository: PhotoRepository): void {
+  active = repository;
+}
+
+/**
+ * A thin proxy delegating to `getActiveRepository()` at call time, so existing call sites
+ * (`photoStore.ts`, `objectUrlCache.ts`, `App.tsx`) that import this constant directly need no
+ * changes at all when the active repository is swapped at runtime.
+ */
+export const photoRepository: PhotoRepository = {
+  list: () => getActiveRepository().list(),
+  add: (record, blobs) => getActiveRepository().add(record, blobs),
+  remove: (id) => getActiveRepository().remove(id),
+  updateLocation: (id, lat, lon) => getActiveRepository().updateLocation(id, lat, lon),
+  getBlob: (id, kind) => getActiveRepository().getBlob(id, kind),
+  clearAll: () => getActiveRepository().clearAll(),
+  estimateUsage: () => getActiveRepository().estimateUsage(),
+  requestPersistence: () => getActiveRepository().requestPersistence(),
+};

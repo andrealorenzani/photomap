@@ -4,5 +4,8 @@ export {
   IndexedDbPhotoRepository,
   StorageQuotaExceededError,
   photoRepository,
+  getActiveRepository,
+  setActiveRepository,
 } from './photoRepository';
 export type { PhotoRepository } from './photoRepository';
+export { ApiPhotoRepository, apiPhotoId, backendIdFromApiPhotoId } from './apiPhotoRepository';

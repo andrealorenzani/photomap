@@ -1,44 +1,159 @@
+import { useState, type FormEvent } from 'react';
+import { useAuthStore } from '../state/authStore';
+import { createShareLink } from '../lib/api/shareLinksApi';
 import './TopBanner.css';
 
+function LoggedOutForm() {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const login = useAuthStore((s) => s.login);
+  const register = useAuthStore((s) => s.register);
+  const error = useAuthStore((s) => s.error);
+  const clearError = useAuthStore((s) => s.clearError);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      if (mode === 'login') {
+        await login(email, password);
+      } else {
+        await register(email, password);
+      }
+    } catch {
+      // Error message is already surfaced via authStore's `error` state.
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form className="top-banner__auth" aria-label="Login or register" onSubmit={handleSubmit}>
+      <input
+        type="email"
+        name="email"
+        placeholder="Email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        required
+      />
+      <input
+        type="password"
+        name="password"
+        placeholder="Password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        required
+      />
+      <button type="submit" disabled={submitting}>
+        {mode === 'login' ? 'Log in' : 'Register'}
+      </button>
+      <button
+        type="button"
+        className="top-banner__mode-switch"
+        onClick={() => {
+          clearError();
+          setMode((m) => (m === 'login' ? 'register' : 'login'));
+        }}
+      >
+        {mode === 'login' ? 'Need an account? Register' : 'Have an account? Log in'}
+      </button>
+      {error && (
+        <span role="alert" className="top-banner__error">
+          {error}
+        </span>
+      )}
+    </form>
+  );
+}
+
+function LoggedInControls({ email }: { email: string }) {
+  const logout = useAuthStore((s) => s.logout);
+  const deleteAccount = useAuthStore((s) => s.deleteAccount);
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleCopyShareLink() {
+    setShareStatus(null);
+    try {
+      const link = await createShareLink();
+      const fullUrl = `${window.location.origin}${link.url}`;
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(fullUrl);
+        setShareStatus('Share link copied to clipboard.');
+      } else {
+        setShareStatus(`Share link: ${fullUrl}`);
+      }
+    } catch {
+      setShareStatus('Could not create a share link. Please try again.');
+    }
+  }
+
+  async function handleDeleteAccount() {
+    setDeleting(true);
+    try {
+      await deleteAccount();
+    } finally {
+      setDeleting(false);
+      setConfirmingDelete(false);
+    }
+  }
+
+  return (
+    <div className="top-banner__account">
+      <span className="top-banner__email" data-testid="account-email">
+        {email}
+      </span>
+      <button type="button" onClick={handleCopyShareLink}>
+        Copy share link
+      </button>
+      <button type="button" onClick={() => logout()}>
+        Log out
+      </button>
+      {!confirmingDelete ? (
+        <button type="button" className="top-banner__delete" onClick={() => setConfirmingDelete(true)}>
+          Delete account
+        </button>
+      ) : (
+        <span className="top-banner__confirm-delete">
+          Delete your account and all photos? This cannot be undone.
+          <button type="button" onClick={handleDeleteAccount} disabled={deleting}>
+            Yes, delete
+          </button>
+          <button type="button" onClick={() => setConfirmingDelete(false)} disabled={deleting}>
+            Cancel
+          </button>
+        </span>
+      )}
+      {shareStatus && (
+        <span role="status" className="top-banner__share-status">
+          {shareStatus}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /**
- * Branding + a purely visual, inert auth placeholder for what Phase 2/3 will wire up.
- * Deliberately: no form submit handler, no network call, no fake "logged in" state change.
- * Inputs/button are disabled so it cannot be mistaken for a working login.
+ * Real login/register when logged out; account email + copy-share-link + delete-account when
+ * authenticated. Guest mode (no session) shows the login/register form and makes no network
+ * calls until the user actually submits it.
  */
 export function TopBanner() {
+  const status = useAuthStore((s) => s.status);
+  const user = useAuthStore((s) => s.user);
+
   return (
     <header className="top-banner">
       <div className="top-banner__brand">Photomap</div>
-      <form
-        className="top-banner__auth"
-        aria-label="Login (coming soon)"
-        onSubmit={(e) => e.preventDefault()}
-      >
-        <input
-          type="text"
-          name="username"
-          placeholder="Username"
-          disabled
-          aria-disabled="true"
-          title="Coming soon: accounts are not available in guest mode"
-        />
-        <input
-          type="password"
-          name="password"
-          placeholder="Password"
-          disabled
-          aria-disabled="true"
-          title="Coming soon: accounts are not available in guest mode"
-        />
-        <button
-          type="button"
-          disabled
-          aria-disabled="true"
-          title="Coming soon: accounts are not available in guest mode"
-        >
-          Login / Register (coming soon)
-        </button>
-      </form>
+      {status === 'authenticated' && user ? (
+        <LoggedInControls email={user.email} />
+      ) : (
+        <LoggedOutForm />
+      )}
     </header>
   );
 }

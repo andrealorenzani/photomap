@@ -1,0 +1,94 @@
+# Root, whole-stack docker-compose: MySQL + PHP backend + static frontend behind nginx, all
+# reachable from one URL with one command. This is the "run it locally without installing
+# anything but Docker" path, distinct from:
+#   - the native dev path (three terminals: `npm run dev` + `php -S` + a local MySQL server), and
+#   - a genuine production deployment (a static file host for the frontend build + a separate
+#     plain PHP+MySQL host for the backend, potentially on a different origin).
+# See the root README.md for all three paths.
+#
+# The frontend container's nginx proxies /api/* to the backend container, so the browser sees
+# everything as same-origin — cookies work with the default SameSite=Lax and no CORS
+# configuration is needed for this path (mirroring the Vite dev-server proxy used for native
+# dev). `backend/docker-compose.yml` is a separate, backend-only dev/test convenience — this
+# file is the whole-stack one.
+#
+# Quick start:
+#   docker compose up --build
+# then open http://localhost:8080
+#
+# Idempotent/repeatable from scratch:
+#   docker compose down -v && docker compose up --build
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=photomap
+      - MYSQL_USER=photomap
+      - MYSQL_PASSWORD=photomap
+    volumes:
+      - ./backend/docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - photomap_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=photomap
+      - DB_USER=photomap
+      - DB_PASSWORD=photomap
+      - APP_ENV=local
+      # Change this for anything beyond a local trial — it's a fixed placeholder so the whole
+      # stack boots with a genuinely single command with no manual .env setup step. Override via
+      # a real `.env` file (compose reads it automatically) or `APP_SECRET=... docker compose up`.
+      - APP_SECRET=${APP_SECRET:-a1b2c3d4e5f60718293a4b5c6d7e8f9021324354657687980910111213141516}
+      - STORAGE_PATH=/app/storage
+      - MAX_UPLOAD_BYTES=26214400
+      - STORAGE_QUOTA_BYTES=104857600
+      - "NOMINATIM_USER_AGENT=${NOMINATIM_USER_AGENT:-Photomap/1.0 (contact: you@example.com)}"
+      - SESSION_COOKIE_NAME=photomap_session
+      - RATE_LIMIT_LOGIN_MAX_ATTEMPTS=5
+      - RATE_LIMIT_LOGIN_WINDOW_SECONDS=900
+      - NOMINATIM_MIN_INTERVAL_SECONDS=1
+      # Same-origin via the nginx proxy below, so neither of these needs to change from default.
+      - CORS_ALLOWED_ORIGINS=
+      - SESSION_COOKIE_SAMESITE=Lax
+    depends_on:
+      mysql:
+        condition: service_healthy
+    # Migrations run automatically before serving, so this really is one command with no
+    # separate manual migration step. The retry loop around migrate.php is a robustness
+    # cushion: `mysqladmin ping` (the healthcheck above) can report healthy a moment before
+    # MySQL is actually accepting new application connections, which otherwise makes the very
+    # first `docker compose up --build` on a fresh volume flaky (a mysql restart or a second
+    # `docker compose up` always self-heals, but shouldn't be needed).
+    command: >
+      sh -c "composer install --no-interaction &&
+             until php scripts/migrate.php; do echo 'waiting for MySQL...'; sleep 2; done &&
+             php -S 0.0.0.0:8000 -t public public/index.php"
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  photomap_mysql_data:

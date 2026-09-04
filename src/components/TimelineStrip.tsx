@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { usePhotoStore } from '../state/photoStore';
+import type { PhotoRecord } from '../types';
+import { usePhotoStore, type DateRange } from '../state/photoStore';
 import {
   adaptiveBinCount,
   binIndexForOffset,
@@ -14,14 +15,38 @@ import './TimelineStrip.css';
 const HEIGHT = 72;
 const UNKNOWN_SEGMENT_WIDTH = 90;
 
-export function TimelineStrip() {
+export interface TimelineStripProps {
+  /** When supplied, bins this set instead of the global store (used by the read-only share
+   * view, which keeps photo data in local component state, never the global Zustand store). */
+  photos?: PhotoRecord[];
+  /**
+   * Controlled date-range selection. When supplied (with `onDateFilterChange`), the component
+   * neither reads nor writes the global store's `dateFilter` — used by the share view, so
+   * clicking its timeline doesn't leak into the main app's own timeline selection. Omitted (the
+   * default), the component falls back to the global store exactly as before.
+   */
+  dateFilter?: DateRange | null;
+  onDateFilterChange?: (range: DateRange | null) => void;
+}
+
+export function TimelineStrip({
+  photos: photosProp,
+  dateFilter: dateFilterProp,
+  onDateFilterChange,
+}: TimelineStripProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const photos = usePhotoStore((s) => s.photos);
-  const dateFilter = usePhotoStore((s) => s.dateFilter);
-  const setDateFilter = usePhotoStore((s) => s.setDateFilter);
+  const storePhotos = usePhotoStore((s) => s.photos);
+  const storeDateFilter = usePhotoStore((s) => s.dateFilter);
+  const storeSetDateFilter = usePhotoStore((s) => s.setDateFilter);
+  const controlled = onDateFilterChange !== undefined;
+  const dateFilter = controlled ? dateFilterProp ?? null : storeDateFilter;
+  const setDateFilter = controlled ? (onDateFilterChange as (r: DateRange | null) => void) : storeSetDateFilter;
 
-  const allPhotos = useMemo(() => Array.from(photos.values()), [photos]);
+  const allPhotos = useMemo(
+    () => photosProp ?? Array.from(storePhotos.values()),
+    [photosProp, storePhotos]
+  );
   const domain = useMemo(() => computeDomain(allPhotos), [allPhotos]);
   const unknownDatePhotos = useMemo(() => photosWithUnknownDate(allPhotos), [allPhotos]);
 

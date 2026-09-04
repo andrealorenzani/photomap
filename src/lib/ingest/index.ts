@@ -114,6 +114,14 @@ export function ingestFiles(rawFiles: File[], options: IngestOptions = {}): Inge
         if (!quotaWarned) {
           photoRepository
             .add(record, { thumbnail: thumbnailBlob, preview: previewBlob })
+            .then((persisted) => {
+              // Account mode assigns its own (server-side AUTO_INCREMENT) id, which differs
+              // from the client-generated stable-hash id optimistically used above; guest mode
+              // always returns the same id, so this is a no-op there.
+              if (persisted.id !== id) {
+                usePhotoStore.getState().reconcileId(id, persisted);
+              }
+            })
             .catch((err) => {
               if (err instanceof StorageQuotaExceededError) {
                 quotaWarned = true;
@@ -121,9 +129,20 @@ export function ingestFiles(rawFiles: File[], options: IngestOptions = {}): Inge
                   storageWarning:
                     'Storage is full: further photos in this batch will still be shown for this session but will not be saved, and will need to be re-selected after a page reload.',
                 });
-              } else {
-                throw err;
+                return;
               }
+
+              // Any other persistence failure (network error, 413/422/expired-session in
+              // account mode, etc.) previously became a silent unhandled rejection. Surface it
+              // as a status-panel message + failure counter instead of swallowing it — the
+              // photo still displays for this session (best-effort, matching guest mode's
+              // existing quota-exceeded UX) but the user is told it wasn't saved.
+              usePhotoStore.getState().setStatus({
+                uploadFailures: usePhotoStore.getState().status.uploadFailures + 1,
+                storageWarning: `Failed to save "${file.name}": ${
+                  err instanceof Error ? err.message : 'unknown error'
+                }. It's shown for this session but was not saved.`,
+              });
             });
         }
       },

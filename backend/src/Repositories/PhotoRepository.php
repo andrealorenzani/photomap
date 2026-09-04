@@ -69,6 +69,20 @@ final class PhotoRepository
         return (int) $this->pdo->lastInsertId();
     }
 
+    /**
+     * Updates a photo's location. Ownership must already be verified by the caller (via
+     * find()) before calling this — the WHERE clause here is defense-in-depth, not the sole
+     * ownership check, and this method deliberately does not report success/failure via
+     * rowCount(): a no-op update (e.g. dragging a marker back to its original spot) reports 0
+     * affected rows under PDO/MySQL's default "rows changed" semantics, which would be a
+     * false-negative trap if used as a success signal.
+     */
+    public function updateLocation(int $id, int $userId, float $lat, float $lon): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE photos SET lat = ?, lon = ? WHERE id = ? AND user_id = ?');
+        $stmt->execute([$lat, $lon, $id, $userId]);
+    }
+
     public function deleteForUser(int $id, int $userId): bool
     {
         $stmt = $this->pdo->prepare('DELETE FROM photos WHERE id = ? AND user_id = ?');

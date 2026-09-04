@@ -48,6 +48,18 @@ final class HttpClient
         return $this->request('DELETE', $path, null, $headers);
     }
 
+    public function patchJson(string $path, array $data, array $headers = []): HttpResponse
+    {
+        $headers[] = 'Content-Type: application/json';
+
+        return $this->request('PATCH', $path, (string) json_encode($data), $headers);
+    }
+
+    public function options(string $path, array $headers = []): HttpResponse
+    {
+        return $this->request('OPTIONS', $path, null, $headers);
+    }
+
     /**
      * @param array<string, string> $fields Form fields.
      * @param array<string, string> $files Field name => absolute file path.

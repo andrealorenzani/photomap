@@ -1,15 +1,28 @@
+import type { PhotoRecord } from '../types';
 import { usePhotoStore } from '../state/photoStore';
 import { useObjectUrl } from '../lib/useObjectUrl';
 import { formatDateTime } from '../lib/format';
 import './FullSizeViewer.css';
 
+export interface FullSizeViewerProps {
+  /** When supplied, looks the selected photo up in this set instead of the global store (used
+   * by the read-only share view, which keeps photo data in local component state, never the
+   * global Zustand store). */
+  photos?: PhotoRecord[];
+  /** Omits the delete action when true (share view). */
+  readOnly?: boolean;
+}
+
 /**
  * Full-size modal view. Phase 1 shows datetime only — no place name / reverse geocoding, and no
  * raw lat/long is ever surfaced as a label (see plan: geocoding deliberately omitted this phase).
  */
-export function FullSizeViewer() {
+export function FullSizeViewer({ photos: photosProp, readOnly = false }: FullSizeViewerProps = {}) {
   const selectedPhotoId = usePhotoStore((s) => s.selectedPhotoId);
-  const photo = usePhotoStore((s) => (selectedPhotoId ? s.photos.get(selectedPhotoId) : undefined));
+  const storePhoto = usePhotoStore((s) => (selectedPhotoId ? s.photos.get(selectedPhotoId) : undefined));
+  const photo = photosProp
+    ? photosProp.find((p) => p.id === selectedPhotoId)
+    : storePhoto;
   const setSelectedPhoto = usePhotoStore((s) => s.setSelectedPhoto);
   const removePhoto = usePhotoStore((s) => s.removePhoto);
   const previewUrl = useObjectUrl(selectedPhotoId ?? '', 'preview');
@@ -36,9 +49,11 @@ export function FullSizeViewer() {
           </div>
         )}
         <div className="full-size-viewer__actions">
-          <button type="button" onClick={handleDelete}>
-            Delete
-          </button>
+          {!readOnly && (
+            <button type="button" onClick={handleDelete}>
+              Delete
+            </button>
+          )}
           <button type="button" onClick={() => setSelectedPhoto(null)}>
             Close
           </button>

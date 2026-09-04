@@ -1,0 +1,29 @@
+.share-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.share-page__banner {
+  padding: 0.5rem 1rem;
+  background: #1f2933;
+  color: #fff;
+  font-weight: 700;
+}
+
+.share-page__main {
+  flex: 1;
+  min-height: 0;
+}
+
+.share-page--loading,
+.share-page--error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  font-size: 1rem;
+  color: #444;
+  text-align: center;
+  padding: 1rem;
+}

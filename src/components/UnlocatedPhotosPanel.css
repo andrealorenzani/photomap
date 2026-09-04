@@ -1,0 +1,53 @@
+.unlocated-panel {
+  border-top: 1px solid #ddd;
+  background: #fafafa;
+  font-size: 0.85rem;
+}
+
+.unlocated-panel__toggle {
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.8rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.unlocated-panel__list {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.4rem 0.8rem 0.6rem;
+}
+
+.unlocated-panel__item {
+  flex: 0 0 auto;
+  width: 64px;
+  cursor: grab;
+  text-align: center;
+}
+
+.unlocated-panel__item img,
+.unlocated-panel__item .unlocated-panel__placeholder {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px dashed #999;
+  display: block;
+  background: #eee;
+}
+
+.unlocated-panel__name {
+  display: block;
+  font-size: 0.65rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unlocated-panel__empty {
+  padding: 0.4rem 0.8rem 0.6rem;
+  color: #666;
+}

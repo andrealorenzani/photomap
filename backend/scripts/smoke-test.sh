@@ -83,6 +83,19 @@ SHARE_IMAGE_URL=$(jq -r '.photos[0].previewUrl' /tmp/smoke-share-photos.json)
 SHARE_IMAGE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$BASE$SHARE_IMAGE_URL")
 expect_status 200 "$SHARE_IMAGE_STATUS" "public share image fetch (no cookies)"
 
+echo "[8b] PATCH /api/photos/{id} (reassign location)"
+PATCH_STATUS=$(curl -s -o /tmp/smoke-patch.json -w '%{http_code}' -c "$JAR" -b "$JAR" \
+  -X PATCH "$BASE/api/photos/$PHOTO_ID" -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF" \
+  -d '{"lat":48.8566,"lon":2.3522}')
+expect_status 200 "$PATCH_STATUS" "patch photo location"
+PATCHED_LAT=$(jq -r .lat /tmp/smoke-patch.json)
+[ "$PATCHED_LAT" = "48.8566" ] || fail "expected patched lat 48.8566, got $PATCHED_LAT"
+pass "photo location reassigned via PATCH"
+
+LIST_AFTER_PATCH_LAT=$(curl -s -c "$JAR" -b "$JAR" "$BASE/api/photos" | jq -r '.photos[0].lat')
+[ "$LIST_AFTER_PATCH_LAT" = "48.8566" ] || fail "expected reassigned lat reflected on next list call, got $LIST_AFTER_PATCH_LAT"
+pass "reassigned location reflected on next list call"
+
 echo "[9] DELETE /api/photos/{id}"
 DELETE_PHOTO_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -c "$JAR" -b "$JAR" \
   -X DELETE "$BASE/api/photos/$PHOTO_ID" -H "X-CSRF-Token: $CSRF")
@@ -112,7 +125,7 @@ STORAGE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/../storage/photos
 [ "$STORAGE_STATUS" != "200" ] || fail "storage directory appears to be directly web-reachable!"
 pass "storage directory not reachable (got $STORAGE_STATUS)"
 
-rm -f "$JAR" /tmp/smoke-*.json /tmp/smoke-preview.jpg
+rm -f "$JAR" /tmp/smoke-*.json /tmp/smoke-preview.jpg /tmp/smoke-patch.json
 
 echo ""
 echo "== All smoke test steps passed =="

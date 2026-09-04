@@ -95,8 +95,6 @@ The API is now reachable at `http://localhost:8000/api/...`.
 - Orphan-file cleanup jobs (e.g. for files left behind by a crash mid-request) and trusting a
   reverse proxy's `X-Forwarded-For` header for the login rate limiter's IP address are both
   explicitly out of scope for this phase.
-- `PATCH /api/photos/{id}` (drag-to-reassign location) is not implemented — out of scope for
-  Phase 2.
 
 ## API overview
 
@@ -116,6 +114,7 @@ state-changing endpoint (including `/api/register` and `/api/login`) requires an
 | GET | `/api/photos` | yes | no | `200 { photos: [...] }` |
 | POST | `/api/photos` | yes | yes | Multipart: `photo` file + optional `lat`/`lon`/`takenAt`/`cameraMake`/`cameraModel` |
 | DELETE | `/api/photos/{id}` | yes | yes | Owner-only (404 if not owner) |
+| PATCH | `/api/photos/{id}` | yes | yes | `{ lat, lon }` -> updated photo JSON; owner-only (404 if not owner); allowed for any photo, not just currently-GPS-less ones |
 | POST | `/api/share-links` | yes | yes | Rotates: revokes any existing active link, creates a new one |
 | DELETE | `/api/share-links/{id}` | yes | yes | Soft-revoke only |
 | GET | `/api/share/{token}` | no | no | Public read-only view of that account's photos |
@@ -128,6 +127,25 @@ owner context, 10 min for the share context) that are freshly regenerated on eve
 `/api/photos` or `/api/share/{token}` response — they are never persisted. Share-context
 image URLs re-check the share link's revoked status on every fetch, so revoking a link takes
 effect immediately even for URLs a client already has cached.
+
+## CORS and cross-origin cookies (split-origin deployments only)
+
+Same-origin deployments (the frontend dev server proxying `/api` to this backend, or the
+whole-stack Docker compose with nginx proxying `/api` to this backend) never need anything in
+this section — leave `CORS_ALLOWED_ORIGINS` and `SESSION_COOKIE_SAMESITE` at their defaults.
+
+If the frontend is genuinely deployed on a different origin than this API (e.g. a static host
+plus a separate PHP host), two things need to change:
+
+- `CORS_ALLOWED_ORIGINS` — a comma-separated exact-match allow-list of frontend origins (e.g.
+  `https://photos.example.com`). Matching is exact string equality only, never
+  substring/suffix, so `https://evil-photomap.example` can never pass a check against an
+  allow-listed `https://photomap.example`. Leaving this empty (the default) emits no CORS
+  headers at all, and cross-origin browser requests will be blocked by the browser itself.
+- `SESSION_COOKIE_SAMESITE=None` — cross-site `fetch()` calls (with `credentials: 'include'`)
+  do not send `SameSite=Lax` cookies at all, so a split-origin deployment needs
+  `SameSite=None`. Browsers reject `SameSite=None` cookies that aren't also `Secure`, so this
+  also requires `APP_ENV=production` (real HTTPS) — it cannot work over plain HTTP.
 
 ## Manual curl smoke test
 

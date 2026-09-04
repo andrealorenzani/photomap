@@ -58,6 +58,8 @@ export interface IngestStatus {
   skipped: number;
   parsing: boolean;
   storageWarning?: string;
+  /** Count of non-quota persistence failures (network error, 413/422, etc. in account mode). */
+  uploadFailures: number;
 }
 
 /** Parsed EXIF-derived metadata produced by the worker for a single file. */

@@ -4,7 +4,7 @@ import { useObjectUrl } from '../lib/useObjectUrl';
 import { formatDateTime } from '../lib/format';
 import './PhotoThumbStrip.css';
 
-function ThumbItem({ photo }: { photo: PhotoRecord }) {
+function ThumbItem({ photo, readOnly }: { photo: PhotoRecord; readOnly: boolean }) {
   const url = useObjectUrl(photo.id, 'thumbnail');
   const setSelectedPhoto = usePhotoStore((s) => s.setSelectedPhoto);
   const removePhoto = usePhotoStore((s) => s.removePhoto);
@@ -30,14 +30,16 @@ function ThumbItem({ photo }: { photo: PhotoRecord }) {
       </button>
       <div className="photo-thumb__meta">
         <span className="photo-thumb__datetime">{formatDateTime(photo.takenAtISO)}</span>
-        <button
-          type="button"
-          className="photo-thumb__delete"
-          onClick={() => removePhoto(photo.id)}
-          aria-label={`Delete photo ${photo.fileName}`}
-        >
-          Delete
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            className="photo-thumb__delete"
+            onClick={() => removePhoto(photo.id)}
+            aria-label={`Delete photo ${photo.fileName}`}
+          >
+            Delete
+          </button>
+        )}
       </div>
     </div>
   );
@@ -51,7 +53,13 @@ function sortChronologically(photos: PhotoRecord[]): PhotoRecord[] {
   });
 }
 
-export function PhotoThumbStrip({ photos }: { photos: PhotoRecord[] }) {
+export function PhotoThumbStrip({
+  photos,
+  readOnly = false,
+}: {
+  photos: PhotoRecord[];
+  readOnly?: boolean;
+}) {
   const sorted = sortChronologically(photos);
 
   if (sorted.length === 0) {
@@ -61,7 +69,7 @@ export function PhotoThumbStrip({ photos }: { photos: PhotoRecord[] }) {
   return (
     <div className="photo-thumb-strip" data-testid="photo-thumb-strip">
       {sorted.map((photo) => (
-        <ThumbItem key={photo.id} photo={photo} />
+        <ThumbItem key={photo.id} photo={photo} readOnly={readOnly} />
       ))}
     </div>
   );

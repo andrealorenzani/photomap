@@ -12,6 +12,7 @@ export function StatusPanel() {
         <span>With GPS: {status.withGPS}</span>
         <span>Without GPS: {status.withoutGPS}</span>
         {status.skipped > 0 && <span>Skipped/unreadable: {status.skipped}</span>}
+        {status.uploadFailures > 0 && <span>Not saved: {status.uploadFailures}</span>}
       </div>
       {status.parsing && (
         <div className="status-panel__progress" role="progressbar" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100}>

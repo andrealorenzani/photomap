@@ -1,0 +1,25 @@
+.map-style-toggle {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 1000;
+  display: flex;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  font-size: 0.75rem;
+}
+
+.map-style-toggle__button {
+  border: none;
+  background: transparent;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  color: #1f2933;
+}
+
+.map-style-toggle__button--active {
+  background: #2f7de1;
+  color: #fff;
+}
