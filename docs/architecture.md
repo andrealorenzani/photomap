@@ -382,6 +382,109 @@ SPA fallbacks normally behave, so this characteristic is documented rather than 
 no Node entry point, deployable to any static host or the same web root as a plain PHP backend.
 Node/npm remain build-time-only tooling, unchanged in that respect from Phase 1/2.
 
+## Phase 4 — shared-hosting (Dreamhost) deployment support
+
+Photomap's documented "static frontend + plain PHP/MySQL backend" production target had never
+actually been packaged or proven as a single combined deployment before this phase: there was no
+`.htaccess` anywhere in the repo, `Config.php` only knew how to read `.env`, and the frontend's
+`dist/` and the backend's `backend/public/` were documented as two separate web roots assuming a
+reverse proxy the user doesn't get to control on shared hosting. This phase turns that long-stated
+intention into a concretely buildable, single-artifact deployment path, generic to any
+single-directory-per-domain Apache/PHP/MySQL shared host, with Dreamhost as the named worked
+example. It changes no user-facing feature, mode behavior, or privacy property — it is exclusively
+an operational/deployment addition, fully additive alongside the existing `.env`/Docker/native-dev
+paths, which are byte-for-byte unchanged.
+
+### Chosen layout: two-tier deploy, backend kept fully outside the web-reachable tree
+
+A merged single-webroot shape (backend files, including `vendor/`, physically inside the
+web-reachable directory, protected only by `.htaccess` deny rules) was considered and rejected in
+favor of a two-tier, sibling-directory shape: the entire `backend/` project is uploaded to a
+private directory *outside* the Dreamhost domain's mapped docroot, with only a one-line PHP stub
+and the frontend's static assets inside the web-reachable docroot. This extends the project's
+existing hard invariant — that photo storage must be genuinely non-web-reachable — to the entire
+backend source tree via the filesystem itself, and requires zero changes to
+`backend/public/index.php` or `backend/scripts/migrate.php` (both resolve their root via their own
+file's `__DIR__`, unaffected by being `require`d from elsewhere).
+
+```
+~/                                    (Dreamhost account home — never web-served)
+├── photomap-backend/                 <- upload the entire backend/ directory here, unmodified
+│   ├── .htaccess                     <- deny-all, defense in depth (mod_userdir exposure)
+│   ├── config.php                    <- the one file the user edits (DB/secret/storage settings)
+│   ├── vendor/                       <- built locally via `composer install --no-dev`, never committed
+│   ├── src/, migrations/, scripts/
+│   ├── public/index.php              <- UNCHANGED, still the real front controller
+│   └── storage/{photos,thumbnails}/  <- outside the webroot, exactly as before
+└── domain.com/                       <- Dreamhost's Apache DocumentRoot for the domain
+    ├── index.html, assets/*.js/css   <- dist/ contents, uploaded as-is
+    ├── config.js                     <- dist/config.js, apiBaseUrl left at its default '/api'
+    ├── .htaccess                     <- API rewrite + SPA fallback + optional HTTPS redirect
+    └── api/
+        └── index.php                <- one line: require ../../photomap-backend/public/index.php
+```
+
+Because PHP's `__DIR__` inside a `require`d file is computed from that file's own real path
+regardless of who requires it, the stub's `dirname(__DIR__)` still correctly resolves to
+`~/photomap-backend` from inside `backend/public/index.php`. `domain.com/.htaccess` rewrites
+`/api/*` to `api/index.php` and falls back to `index.html` for any other non-file/non-directory
+path — the direct Apache equivalent of `docker/frontend/nginx.conf`'s existing `/api/` proxy_pass
++ SPA `try_files` fallback. Because Dreamhost gives one directory per domain, this shape is
+same-origin by construction, so the existing `CORS_ALLOWED_ORIGINS`/`SESSION_COOKIE_SAMESITE=None`
+split-origin machinery is unnecessary here and defaults to the same simple same-origin settings
+already used by the Docker/dev-proxy paths.
+
+### `config.php`: a second, equivalent way to supply the same settings
+
+`Config::load()` (`backend/src/Config.php`) now checks for a `config.php` file in the root path
+*before* falling back to `.env`: if present, it must `return` a plain associative array of the
+same setting keys `.env.example` documents; those values populate `$_ENV`/`putenv()` and
+`.env`/phpdotenv is never consulted for that process. If `config.php` doesn't return an array, a
+`RuntimeException` is thrown (parse errors in the file itself propagate naturally as a
+`\ParseError`). If no `config.php` exists, behavior is exactly the pre-existing `.env` path,
+unchanged. This is a strictly additive third path: Docker sets real environment variables directly
+and never has a `config.php` present; native dev keeps using `backend/.env` unchanged. A test-only
+`Config::resetForTesting()` was added (flips the private `$loaded` flag) so a single PHPUnit
+process can exercise config.php-vs-.env precedence scenarios without `@runInSeparateProcess`.
+
+A plain-PHP-file-returning-an-array (rather than JSON/YAML) was chosen deliberately: PHP executes
+the file rather than serving its contents as plaintext even if it's ever briefly web-reachable by
+mistake — defense-in-depth on top of, not instead of, the deny-all `.htaccess` and the two-tier
+directory layout.
+
+### Security addition: defense-in-depth against `mod_userdir`-style exposure
+
+The "sibling directory is non-web-reachable" invariant only holds if nothing else on the
+shared-hosting account maps `~/` (or directories under it) to a URL. Shared hosts commonly enable
+`mod_userdir`, which serves a user's home directory — and any sibling directory not otherwise
+domain-mapped — at `http://<server-hostname-or-ip>/~<username>/...`, a different exposure path
+than same-domain directory traversal. Mitigation: a deny-all `backend/.htaccess`
+(`Require all denied`, with an Apache 2.2 `Order deny,allow`/`Deny from all` fallback) ships
+*inside* the backend directory itself, so it's included in every deploy regardless of
+`mod_userdir` settings; the documented manual verification checklist explicitly tests the
+`~username` URL path returns 403, not just the domain-mapped path.
+
+### Packaging and migrations
+
+`backend/scripts/package-for-deploy.sh` runs `npm run build` and
+`composer install --no-dev --optimize-autoloader`, then assembles a `release/` directory with two
+curated subtrees: `release/photomap-backend/` (`public/`, `src/`, `migrations/`, `scripts/`, the
+freshly-built `vendor/`, `composer.json`/`.lock`, `config.php`/`.example`, `.htaccess`, storage
+dirs — explicitly excluding `tests/`, `docker/`, any `.env*` file, `docker-compose.yml`, and
+`phpunit.xml`) and `release/domain.com/` (the frontend's `dist/` output plus the Dreamhost
+`.htaccess`/`api/index.php` stub). It includes a hardcoded-path/URL grep sweep as a warning check.
+`backend/scripts/migrate.php` works unmodified over SSH + PHP CLI against Dreamhost's MySQL/
+MariaDB (the schema was always MySQL-dialect-only, so no DB-dialect migration was needed). As a
+fallback for accounts without SSH, concatenating `backend/migrations/*.sql` into one importable
+file for a phpMyAdmin-based first-time import is documented as an on-demand, generate-when-needed
+command, not a committed file (a committed copy would go stale).
+
+### Docker and native dev: unaffected
+
+Root `docker-compose.yml`, `backend/docker-compose.yml`, and native dev both continue to work
+exactly as before — `Config::load()`'s new `config.php`-first check is a no-op in all of them,
+since no `config.php` file is ever present there.
+
 ## Resolved architecture questions
 
 - **Does "zero network calls" contradict the mandated Leaflet + OpenStreetMap tile stack?**
@@ -446,3 +549,20 @@ Node/npm remain build-time-only tooling, unchanged in that respect from Phase 1/
   `exifWorker.ts` now applies orientation correction when generating the thumbnail/preview canvas
   images, benefiting both modes and removing what would otherwise have become a permanent,
   server-persisted data-quality bug in account mode.
+- **Merged single-webroot vs. two-tier sibling-directory shape for shared-hosting deploy?**
+  Two-tier: the entire `backend/` project lives in a private directory outside the domain's
+  mapped docroot, with only a one-line stub and the frontend build inside it — extends the
+  project's existing "storage outside the web root" invariant to the whole backend source tree.
+- **`config.php` additive vs. replacing `.env` everywhere?** Additive: `.env`/Docker/native-dev
+  paths are unchanged; `config.php` is a second, equivalent way to supply the same settings,
+  checked first by `Config::load()` when present.
+- **Commit `vendor/` vs. build it as part of deploy?** Never committed; built locally via
+  `composer install --no-dev --optimize-autoloader` before packaging/upload. SSH + `composer
+  install` remains a documented fallback for accounts without a local PHP/Composer setup.
+- **Does the shared-hosting mechanism need to be Dreamhost-specific?** No — it's generic
+  single-directory Apache/PHP/MySQL shared hosting; Dreamhost is the named, worked example in
+  docs because it's the host the user actually has.
+- **How is the `mod_userdir` home-directory exposure risk mitigated?** A deny-all
+  `backend/.htaccess` ships inside the private backend directory itself (so it travels with every
+  deploy regardless of host settings), plus an explicit manual-checklist test of the
+  `~username` URL path.

@@ -1,0 +1,28 @@
+# Defense in depth: deny all direct web access to this entire directory.
+#
+# This file only matters at all if this directory (or a copy of it) ends up reachable by a web
+# server despite the intended deploy layout keeping it outside any domain's mapped docroot (see
+# the "Deploying to Dreamhost" section of the README). The specific risk this guards against:
+# many shared hosts (Dreamhost included, depending on account settings) enable mod_userdir,
+# which serves a user's home directory -- and anything under it not otherwise domain-mapped,
+# including a sibling directory like ~/photomap-backend/ -- at
+# http://<server-hostname-or-ip>/~<username>/... regardless of what any domain's own .htaccess
+# says. That is a different exposure path than directory traversal from within a domain's
+# docroot, so it needs its own, independent mitigation: this file.
+#
+# The only intended web entry point into this directory is the one-line stub at
+# domain.com/api/index.php (see deploy/dreamhost/api/index.php), which requires
+# public/index.php directly from PHP -- that require() is unaffected by this Apache-level rule,
+# since it never goes through the web server at all.
+
+# Apache 2.4+ (mod_authz_core)
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+# Apache 2.2 fallback (mod_access_compat / legacy mod_access), in case the account's Apache
+# predates mod_authz_core's "Require" syntax:
+<IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+</IfModule>

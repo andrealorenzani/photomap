@@ -167,3 +167,11 @@ I already ran `git remote add origin git@github.com:andrealorenzani/photomap.git
 Report back a summary of what was built, any decisions you made along the way, current test status, and anything still open or deferred.
 
 No clarifying questions were asked back to the project owner during planning — every open question raised by the product-owner, architect, developer, and tester briefings, plus the advisor's review (which flagged two substantive gaps: photo-id reconciliation between client and server, and a dead EXIF-orientation backend feature — both fixed, not just documented), was resolved by the coordinator from facts already established in the request itself, the existing docs, or straightforward engineering judgment within the phase's stated scope. See the Deep Dives section of the plan in `docs/plans.md` for the full record of every question and its resolution.
+
+---
+
+## 2026-09-05 — Dreamhost / shared-hosting deployment support
+
+"Use the coordinator to change everything so that I can easily deploy this on a cloud host. In particular I use dreamhost, therefore I want just to upload the files into the right directory and write a config.php file for the database location and everything should work."
+
+No clarifying questions were asked back to the user during planning — all open questions were resolved internally from the four domain briefings plus an advisor pass. See the "Deep Dives" section of the corresponding plan in `docs/plans.md` for the full record of every question and its resolution.

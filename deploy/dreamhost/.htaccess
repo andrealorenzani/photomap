@@ -1,0 +1,38 @@
+# Dreamhost (or any Apache + mod_rewrite shared host) domain-docroot .htaccess.
+#
+# Upload this file to the root of the domain's mapped directory (e.g. ~/yourdomain.com/),
+# alongside the frontend's built dist/ files (index.html, assets/*, config.js) and the api/
+# subdirectory (see deploy/dreamhost/api/index.php).
+#
+# This is the direct Apache/mod_rewrite equivalent of docker/frontend/nginx.conf's /api/
+# proxy_pass + SPA try_files fallback -- same routing contract, expressed for Apache instead of
+# nginx: dispatch /api/* to the PHP front controller, and fall back to index.html for any other
+# path that isn't a real static file (needed for real page loads/reloads of client-side routes,
+# in particular /share/:token).
+
+RewriteEngine On
+Options -Indexes
+
+# API: dispatch everything under /api/ to the PHP front controller, preserving REQUEST_URI.
+# Request::path() (backend) reads $_SERVER['REQUEST_URI'] directly, so no query-string/path
+# rewriting beyond "run this PHP file" is needed here.
+RewriteRule ^api/.*$ api/index.php [L]
+
+# SPA fallback for real page loads of client-side routes (in particular /share/:token): if the
+# requested path isn't a real file or directory, serve index.html and let the frontend's own
+# router take over.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]
+
+# Optional, opt-in: uncomment the two lines below to force HTTPS, if your Dreamhost domain has
+# Let's Encrypt enabled and isn't already redirecting at the panel level (avoid enabling both at
+# once -- check the Dreamhost panel's own HTTPS/redirect setting first).
+#
+# IMPORTANT ordering note: if you enable this (or otherwise plan to serve over HTTPS), make sure
+# HTTPS is actually working *before* setting APP_ENV=production in the backend's config.php.
+# APP_ENV=production makes the session cookie Secure-flagged, which browsers silently refuse to
+# store over plain HTTP -- login will appear to succeed but the session won't persist, with no
+# visible error anywhere. See the README's Dreamhost troubleshooting section.
+# RewriteCond %{HTTPS} off
+# RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]

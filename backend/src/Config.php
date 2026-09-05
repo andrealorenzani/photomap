@@ -16,12 +16,47 @@ final class Config
             return;
         }
 
+        // Shared-hosting (e.g. Dreamhost) deploy path: a hand-edited config.php returning an
+        // associative array takes precedence over .env, when present. This lets a non-technical
+        // deploy step be "edit one file" instead of requiring phpdotenv's .env parsing/format.
+        // Purely additive: Docker and native/local dev never place a config.php next to .env, so
+        // this branch is a no-op for those paths.
+        $configPhpPath = $rootPath . '/config.php';
+        if (file_exists($configPhpPath)) {
+            $values = require $configPhpPath;
+            if (!is_array($values)) {
+                throw new \RuntimeException(
+                    'config.php must return an array of settings, got ' . get_debug_type($values)
+                );
+            }
+
+            foreach ($values as $key => $value) {
+                $key = (string) $key;
+                $value = (string) $value;
+                $_ENV[$key] = $value;
+                putenv("{$key}={$value}");
+            }
+
+            self::$loaded = true;
+            return;
+        }
+
         if (file_exists($rootPath . '/' . $envFile)) {
             $dotenv = Dotenv::createImmutable($rootPath, $envFile);
             $dotenv->load();
         }
 
         self::$loaded = true;
+    }
+
+    /**
+     * Test-only: allows a single PHPUnit process to exercise multiple load() scenarios
+     * (config.php vs .env precedence) rather than requiring @runInSeparateProcess everywhere.
+     * Never called from production code paths (public/index.php, scripts/migrate.php).
+     */
+    public static function resetForTesting(): void
+    {
+        self::$loaded = false;
     }
 
     public static function get(string $key, ?string $default = null): ?string

@@ -37,4 +37,31 @@ final class SecurityFeatureTest extends FeatureTestCase
         $response2 = $this->http->get('/../storage/photos/1/anything.jpg');
         $this->assertNotSame(200, $response2->status);
     }
+
+    public function testNoStrayConfigPhpShadowsEnvTestFixtures(): void
+    {
+        // Config::load() checks for a config.php in the backend root before falling back to
+        // .env/.env.test (see the shared-hosting/Dreamhost deploy support). This suite's
+        // real backend root must never have a stray config.php sitting next to .env.test, or
+        // every Feature test would silently start running against whatever that stray file
+        // says instead of the intended .env.test fixture — this is a regression guard for that,
+        // not just an assumption.
+        $backendRoot = dirname(__DIR__, 2);
+        $this->assertFileDoesNotExist(
+            $backendRoot . '/config.php',
+            'A stray backend/config.php would shadow .env.test for the whole Feature suite (see Config::load()).'
+        );
+
+        // Positive-side confirmation that .env.test genuinely is the active source: its
+        // dedicated test-only session cookie name should be the one the live server sends.
+        $response = $this->http->get('/api/csrf-token');
+        $cookieHeader = null;
+        foreach ($response->setCookieHeaders() as $header) {
+            if (str_starts_with($header, 'photomap_session_test=')) {
+                $cookieHeader = $header;
+                break;
+            }
+        }
+        $this->assertNotNull($cookieHeader, 'Expected the .env.test-configured session cookie name to be in use.');
+    }
 }

@@ -149,14 +149,35 @@ an account, unlike photo data itself.
   stack (MySQL + backend + frontend behind nginx) locally for anyone who doesn't want to install
   anything but Docker — clearly documented as a local-use convenience, distinct from a real
   production deployment.
+- **Shared-hosting deployment (e.g. Dreamhost) is now a first-class, documented path**, not just
+  a theoretical "any plain PHP+MySQL host will do" claim. A user with a Dreamhost-style account
+  (one Apache-mapped directory per domain, no reverse proxy they control) can deploy the whole
+  app by: building/packaging locally (`backend/scripts/package-for-deploy.sh`, which runs the
+  frontend build and a production `composer install` and assembles a ready-to-upload two-part
+  `release/` directory), uploading the two resulting directories over SFTP, filling in one
+  `config.php` file with their Dreamhost-provided database host/name/user/password and an app
+  secret, and running the migration script once. No manual `.htaccess` authoring, no manual
+  directory-layout decisions, and no separate frontend/backend hosting slots are required — the
+  root and backend READMEs document this end-to-end as "Deploying to Dreamhost (shared hosting)."
+  The underlying mechanism is generic single-directory Apache/PHP/MySQL shared hosting, not
+  Dreamhost-proprietary; Dreamhost is used as the concrete, worked example because that's the
+  host the user actually has.
 - Account-mode photo storage remains private: files live outside the backend's web root, under
-  randomized filenames, served only via short-lived HMAC-signed URLs. This is a security/privacy
-  property of the product, not just an implementation detail, and is explicitly documented as
-  such in the root README.
+  randomized filenames, served only via short-lived HMAC-signed URLs. On a shared-hosting deploy
+  this now extends to the entire backend source tree, not just the storage directory — the whole
+  `backend/` project is uploaded to a private sibling directory outside the domain's mapped
+  docroot, with a deny-all `.htaccess` shipped inside it as defense-in-depth against hosts that
+  additionally expose account home directories via `mod_userdir`-style URLs. This remains a
+  security/privacy property of the product, not just an implementation detail, and is explicitly
+  documented as such in the root README.
 - Every environment-specific setting (backend DB/storage/quota/rate-limit/CORS/Nominatim
-  settings, frontend API base URL and map tile/style settings) is externalized via `.env`
-  files and, for the frontend's post-build API base URL specifically, a plain runtime
-  `config.js` file — documented in one consolidated root README.
+  settings, frontend API base URL and map tile/style settings) is externalized. The backend now
+  supports two equivalent ways of supplying the same settings: the existing `.env` file (local
+  dev, Docker — unchanged) or a hand-edited `config.php` returning a plain PHP array (shared
+  hosting), which take precedence over `.env` when present but never coexist with it in normal
+  use. The frontend's post-build API base URL is still a plain runtime `config.js` file. All of
+  this is documented in one consolidated root README, plus a Dreamhost-specific section in both
+  READMEs.
 
 ## Not yet built
 - **Trip auto-grouping, route lines between nearby-in-time photos, GeoJSON/KML export, and a

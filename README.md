@@ -85,6 +85,53 @@ Node server. Verified as part of this change: `find dist -type f` shows only sta
   cookies" section. Same-origin deployments (a reverse proxy in front of both, like the Docker
   path above) never need either setting.
 
+## Deploying to Dreamhost (shared hosting)
+
+A worked, concrete deployment path for Dreamhost-style shared hosting — one Apache-mapped
+directory per domain, no reverse proxy you control, SFTP/SSH as the only upload mechanism. The
+mechanism itself (a two-tier directory layout + `.htaccess` routing + a hand-edited `config.php`)
+is generic Apache+PHP+MySQL shared hosting, not Dreamhost-proprietary; Dreamhost is just the named
+example. Full details, rationale, and the file-by-file layout live in `backend/README.md`'s
+"Deploying to Dreamhost" section — the short version:
+
+1. In the Dreamhost panel, confirm/select PHP ≥ 8.1 for the domain, with the extensions
+   `pdo_mysql`, `gd`, `fileinfo`, `curl`, `json`, `mbstring`, `exif` available.
+2. Build and stage a release locally: `bash backend/scripts/package-for-deploy.sh`. This produces
+   `release/photomap-backend/` (the backend, including a freshly built `vendor/`) and
+   `release/domain.com/` (the frontend build plus an `.htaccess` and `api/index.php` stub).
+3. Upload `release/photomap-backend/` via SFTP to a **private** directory outside your domain's
+   mapped docroot (e.g. `~/photomap-backend/`), and the **contents** of `release/domain.com/` to
+   your domain's docroot (e.g. `~/yourdomain.com/`).
+4. Copy `backend/config.php.example` to `config.php` inside the uploaded `photomap-backend/`
+   directory (either locally before packaging, or directly on the host) and fill in the DB
+   host/name/user/password Dreamhost's panel gave you, a generated `APP_SECRET`, and an absolute
+   `STORAGE_PATH` (a sibling of `photomap-backend/`, e.g. `~/photomap-backend/storage`) — see the
+   file's inline comments.
+5. Over SSH, run `php scripts/migrate.php` once inside the uploaded `photomap-backend/`
+   directory. This is a **one-time-per-deploy** step, not one-time-forever: run it again after
+   uploading any future update that adds new migration files. No SSH? A phpMyAdmin-import
+   fallback (concatenating `migrations/*.sql` into one file) is documented in
+   `backend/README.md`, for first-time setup only.
+6. Load your domain in a browser and confirm `/`, `/share/:token`, and an upload/share round-trip
+   all work.
+
+Two pitfalls worth knowing about before you hit them (both spelled out in more detail in
+`backend/README.md`):
+
+- **HTTPS ordering**: if login appears to succeed but you're immediately signed back out (the
+  session doesn't persist), you almost certainly set `APP_ENV=production` in `config.php` before
+  enabling HTTPS (Let's Encrypt) for the domain. `Secure`-flagged cookies are silently dropped by
+  the browser over plain HTTP, with no visible error. Enable HTTPS first, or use
+  `APP_ENV=development` temporarily while testing over plain HTTP.
+- **`mod_userdir` exposure**: the private backend directory's non-web-reachability relies on it
+  being outside any domain's mapped docroot — but some shared hosts (Dreamhost included,
+  depending on account settings) also serve account home directories at
+  `http://<server-hostname>/~<username>/...` via `mod_userdir`, regardless of domain mapping.
+  `backend/.htaccess` (a deny-all rule, included in every package produced by
+  `package-for-deploy.sh`) guards against exactly this as defense-in-depth — but as part of your
+  own verification, explicitly test the `~username` URL for your uploaded backend directory and
+  confirm it 403s, not just the domain-mapped path.
+
 ## Privacy and storage — side by side
 
 - **Guest mode**: *"your photos never leave this device."* Photo bytes, EXIF metadata,
@@ -167,8 +214,14 @@ test/           Frontend Vitest unit/integration tests
 backend/        Standalone PHP + MySQL accounts backend (own README, own tests)
 docker/         Root whole-stack Docker Compose build context (frontend Dockerfile + nginx.conf)
 docker-compose.yml   Root whole-stack compose file (see "Quick start" above)
+deploy/dreamhost/    Shared-hosting deploy assets: domain-docroot .htaccess, the api/index.php
+                     stub, and an on-demand Apache-routing verification script (see "Deploying
+                     to Dreamhost" above and backend/README.md)
 docs/           product.md, architecture.md, code.md, plans.md, original_prompts.md
 ```
+
+`backend/scripts/package-for-deploy.sh` builds a ready-to-upload `release/` directory tree from
+the above (gitignored — a build artifact, never committed).
 
 See `docs/code.md` for the detailed frontend module layout and `backend/README.md` for the
 backend's.

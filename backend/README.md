@@ -64,6 +64,11 @@ php -r 'echo ini_get("upload_max_filesize") . " / " . ini_get("post_max_size") .
    Also set `NOMINATIM_USER_AGENT` to something that includes real contact info, per
    [Nominatim's usage policy](https://operations.osmfoundation.org/policies/nominatim/).
 
+   For shared hosting (e.g. Dreamhost) where a hand-edited `config.php` is easier to manage than
+   a `.env` file, see "Deploying to Dreamhost" below — `config.php`, if present, takes precedence
+   over `.env` for the same settings; it's purely additive and doesn't change this native/Docker
+   dev path at all.
+
 4. Run migrations (idempotent — tracks applied files in a `schema_migrations` table it
    creates automatically):
 
@@ -78,6 +83,153 @@ php -r 'echo ini_get("upload_max_filesize") . " / " . ini_get("post_max_size") .
    ```
 
 The API is now reachable at `http://localhost:8000/api/...`.
+
+## Deploying to Dreamhost (shared hosting)
+
+A concrete, worked deployment path for Dreamhost-style shared hosting: one Apache-mapped
+directory per domain, no reverse proxy you control, SFTP/SSH as the only upload mechanism. The
+mechanism (two-tier directory layout, `.htaccess` routing, a hand-edited `config.php`) is generic
+Apache+PHP+MySQL shared hosting — nothing here is Dreamhost-proprietary — but Dreamhost is the
+named example throughout.
+
+### Why two directories, not one
+
+Dreamhost maps exactly one directory to a domain, and there's no reverse proxy you control to put
+the frontend and backend behind a single unified origin the way Docker's nginx or Vite's dev
+proxy do locally. This deploy path achieves the same "one origin" outcome by literally
+interleaving a one-line PHP stub and the static frontend build inside the domain's docroot, while
+keeping the *entire* backend project (`vendor/`, `src/`, `config.php`, `storage/`) in a private
+sibling directory outside that docroot entirely — extending this project's existing "photo
+storage must be genuinely non-web-reachable" invariant to the whole backend source tree, not just
+`storage/`.
+
+Recommended layout, both directories siblings under your Dreamhost account home (`~/`, never
+itself web-served):
+
+```
+~/photomap-backend/     <- the entire backend project, uploaded as-is; NOT web-reachable
+  .htaccess              deny-all, defense in depth (ships with the backend; see below)
+  config.php             the one file you edit — DB host/name/user/password, APP_SECRET, etc.
+  vendor/, src/, migrations/, scripts/
+  public/index.php       unchanged front controller
+  storage/{photos,thumbnails}/
+
+~/yourdomain.com/        <- Dreamhost's Apache DocumentRoot for the domain
+  index.html, assets/*.js/css, config.js   (the frontend's dist/ build, as-is)
+  .htaccess              API rewrite + SPA fallback (see deploy/dreamhost/.htaccess)
+  api/index.php          one line: require '../../photomap-backend/public/index.php'
+```
+
+Frontend `dist/config.js`'s `apiBaseUrl` needs no change from its existing default (`/api`) —
+`api/` being a subfolder of the same domain makes this deployment same-origin by construction, so
+`CORS_ALLOWED_ORIGINS` and `SESSION_COOKIE_SAMESITE` also stay at their simple same-origin
+defaults (empty / `Lax`).
+
+### Steps
+
+1. **Confirm PHP version/extensions in the Dreamhost panel** before uploading anything: PHP
+   ≥ 8.1, with `pdo_mysql`, `gd`, `fileinfo`, `curl`, `json`, `mbstring`, `exif` available (this
+   backend's `composer.json` `require` block lists the same set). Dreamhost lets you pick the PHP
+   version per domain in its panel.
+
+2. **Build and stage a release locally** (needs Node/npm and Composer locally — Dreamhost itself
+   never needs to run either):
+
+   ```bash
+   bash backend/scripts/package-for-deploy.sh
+   ```
+
+   This runs `npm run build` and `composer install --no-dev --optimize-autoloader`, then
+   assembles a `release/` directory at the repo root: `release/photomap-backend/` (a **curated**
+   copy of the backend — not a raw recursive copy; it excludes `tests/`, `docker/`, `.env*`,
+   `docker-compose.yml`, `phpunit.xml`, and includes a freshly built `vendor/`, the deny-all
+   `.htaccess`, and `config.php.example`) and `release/domain.com/` (the frontend build plus the
+   `.htaccess`/`api/index.php` stub from `deploy/dreamhost/`).
+
+3. **Upload via SFTP**: `release/photomap-backend/` to a private directory outside your domain's
+   docroot (e.g. `~/photomap-backend/`), and the *contents* of `release/domain.com/` to your
+   domain's docroot (e.g. `~/yourdomain.com/`). If you renamed/relocated the private directory,
+   update the one hardcoded path in `~/yourdomain.com/api/index.php` to match.
+
+4. **Fill in `config.php`**: copy `backend/config.php.example` to `config.php` (either locally
+   before packaging, so `package-for-deploy.sh` includes it automatically, or directly on the
+   host over SFTP/SSH) and fill in the real values Dreamhost's panel gives you — `DB_HOST` is a
+   Dreamhost-assigned hostname (not `127.0.0.1`), plus `DB_NAME`/`DB_USER`/`DB_PASSWORD`, a
+   generated `APP_SECRET` (`php -r 'echo bin2hex(random_bytes(32));'`), and an absolute
+   `STORAGE_PATH` outside the docroot (e.g. `~/photomap-backend/storage`). Leave `APP_ENV` at
+   `development` until HTTPS is confirmed working (see the troubleshooting note below).
+   `config.php` is additive: `.env`/phpdotenv keeps working unchanged for local/Docker dev;
+   `Config::load()` only prefers `config.php` when one is actually present next to it.
+
+5. **Run migrations once, over SSH**, inside the uploaded backend directory:
+
+   ```bash
+   php scripts/migrate.php
+   ```
+
+   This is idempotent and **one-time-per-deploy, not one-time-forever**: if you later upload an
+   update that adds new migration files, run it again — it only applies files it hasn't already
+   recorded in `schema_migrations`. No SSH access on your plan? As a first-time-only fallback,
+   concatenate `migrations/*.sql` (already numbered to run in order) into one `.sql` file and
+   import it via phpMyAdmin; this bypasses `schema_migrations` bookkeeping, so treat it as a
+   one-shot initial-setup path, not a substitute for the script on later deploys.
+
+6. **Verify**: load the domain in a browser; confirm `/`, a reload of `/share/:token`, and a full
+   upload → thumbnail → share-link round trip all work (this exercises GD/exif/curl extension
+   availability and file permissions together). See "Manual verification checklist" below for the
+   full list, including the `mod_userdir` check.
+
+### Other things worth knowing before you upload
+
+- **Upload size limits**: `MAX_UPLOAD_BYTES` (25MB default) may exceed Dreamhost's default
+  `upload_max_filesize`/`post_max_size` PHP ini values. If needed, add a
+  `~/yourdomain.com/api/.user.ini` (Dreamhost's supported per-directory ini override) bumping
+  both.
+- **File permissions**: `storage/photos/`/`storage/thumbnails/` just need to exist after upload
+  (they ship with `.gitkeep` placeholders) — Dreamhost runs PHP as your own account's user, so no
+  extra `chown`/`chmod` dance is expected.
+- **Storage quota**: `STORAGE_QUOTA_BYTES` (100MB/account default) is unrelated to Dreamhost
+  specifically, but worth sanity-checking against your Dreamhost plan's own disk quota if you
+  expect many accounts.
+- **Subdirectory deploys**: the layout above targets a domain's root. Deploying under a
+  subdirectory instead needs a `RewriteBase` adjustment in `.htaccess` and a corresponding
+  relative-path tweak in `api/index.php` — not covered step-by-step here since it depends on your
+  specific subdirectory.
+
+### Troubleshooting: login "succeeds" but you're immediately signed out
+
+This means `APP_ENV=production` in `config.php` was set **before** HTTPS was actually working for
+the domain. The session cookie's `Secure` flag is gated purely on `APP_ENV=production` (see
+"Known, documented limitations" below) with no check that the connection is actually HTTPS — so
+if you set `APP_ENV=production` first, the browser silently refuses to persist the
+`Secure`-flagged cookie over plain HTTP. There's no visible error anywhere; the login request
+itself succeeds, but nothing about the session sticks.
+
+Fix: confirm your domain's HTTPS (Let's Encrypt, enabled via the Dreamhost panel) is actually
+working first, *then* set `APP_ENV=production`. While testing over plain HTTP, temporarily use
+`APP_ENV=development` instead. `deploy/dreamhost/.htaccess` ships a commented-out HTTP→HTTPS
+redirect block you can opt into once Let's Encrypt is provisioned — enabling the redirect alone
+doesn't help if Let's Encrypt itself isn't set up yet, so check that first.
+
+### Manual verification checklist (one-time, against the real Dreamhost account)
+
+- `php -m` over SSH (or the Dreamhost panel) shows every extension `composer.json` requires.
+- Real page loads/reloads of `/`, `/share/:token`, and a live `/api/*` call from the browser all
+  behave as expected (an on-demand automated approximation of this exists —
+  `deploy/dreamhost/verify-apache-routing.sh`, Docker-based, run locally against a packaged
+  `release/` before uploading).
+- The private `photomap-backend/` directory is genuinely not web-reachable from the live domain
+  **and** from `http://<server-hostname-or-ip>/~<dreamhost-username>/photomap-backend/config.php`
+  — this `mod_userdir`-style path is a distinct exposure risk from same-domain traversal (some
+  shared hosts, Dreamhost included depending on account settings, serve account home directories
+  this way regardless of domain mapping) and is exactly what the shipped deny-all
+  `backend/.htaccess` guards against. Confirm it 403s, not 200.
+- `config.php` with real Dreamhost DB credentials works, and `php scripts/migrate.php` (or the
+  phpMyAdmin fallback) completed without error.
+- Upload → thumbnail → share-link flow works end-to-end live.
+- Session cookie behavior (`APP_ENV=production`, `Secure` flag) actually works over real HTTPS in
+  a live browser round trip — and specifically, that HTTPS was enabled *before* `APP_ENV` was set
+  to `production` (see the troubleshooting note above).
 
 ## Known, documented limitations
 
@@ -231,11 +383,16 @@ composer test
   per-test) test database: CSRF logic, ownership checks, quota math (including a genuine
   multi-process concurrency test proving the row-lock serializes concurrent uploads),
   image-resize helpers, rate-limiter logic, geocode rounding/caching, signed-URL
-  generation/verification (including the share-context revocation check).
+  generation/verification (including the share-context revocation check), and (new, for the
+  Dreamhost/shared-hosting deploy support) `ConfigTest` — `Config::load()`'s `config.php`-vs-
+  `.env` precedence, malformed-`config.php` handling, and an end-to-end check that
+  `Database::connect()` picks up `config.php`-sourced `DB_*` values correctly.
 - `tests/Feature/` — boots a real `php -S` subprocess per test class and drives it with curl
   over HTTP, so cookies, `Set-Cookie` headers, multipart uploads, and session persistence
   are exercised for real, not simulated in-process. The database and scratch storage
-  directory are reset between tests.
+  directory are reset between tests. `SecurityFeatureTest` also asserts no stray `config.php`
+  exists in the backend root during this suite's run (which would otherwise silently shadow
+  `.env.test` for every Feature test).
 - Nominatim is never called for real. `NominatimClient` implements
   `GeocodeClientInterface`; tests inject a `FakeGeocodeClient` (canned responses, records
   call count) for behavioral tests, and a tiny local raw-socket fake HTTP server for the one
@@ -244,6 +401,11 @@ composer test
 - `.env.test` uses short rate-limit windows (`RATE_LIMIT_LOGIN_WINDOW_SECONDS=2`) and a tiny
   Nominatim spacing interval so the suite doesn't need real multi-second sleeps, except one
   deliberate real-time wait proving a rate-limit window actually expires.
+- Not exercised by `composer test` (needs Docker, and is slower/more infrastructure-heavy):
+  `deploy/dreamhost/verify-apache-routing.sh`, an on-demand Apache/mod_rewrite routing check
+  against a packaged `release/` artifact (`php -S`, used by the Feature tier above, never
+  processes `.htaccess` at all, so this is the only coverage of that surface). Run it manually
+  before a Dreamhost deploy or after touching `backend/.htaccess`/`deploy/dreamhost/*`.
 
 ## Docker-based dev/test setup (optional convenience only)
 

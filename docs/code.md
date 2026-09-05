@@ -335,8 +335,9 @@ the full API table, the CORS/cross-origin-cookie section, and a copy-pasteable c
 Other scripts:
 
 ```bash
-composer test               # phpunit — 109 tests (46 Unit + 63 Feature)
+composer test               # phpunit — 117 tests (53 Unit + 64 Feature)
 bash scripts/smoke-test.sh http://localhost:8000   # runnable curl walkthrough (requires curl, jq)
+bash scripts/package-for-deploy.sh          # assembles a release/ artifact for shared-hosting deploy
 ```
 
 `backend/docker-compose.yml` (`backend/docker/Dockerfile`, `backend/docker/init.sql`) remains a
@@ -360,7 +361,13 @@ backend/
   public/index.php                 Front controller — the only web-root-reachable file;
                                     CorsMiddleware runs first, before Session::start()
   src/
-    Config.php                     Reads/validates .env-derived settings
+    Config.php                     Reads/validates settings; checks for a root-level config.php
+                                    first (shared-hosting/Dreamhost deploy path — a plain PHP
+                                    file returning an associative array, values populate
+                                    $_ENV/putenv()), falling back to the pre-existing .env/
+                                    phpdotenv behavior when no config.php exists; throws if
+                                    config.php doesn't return an array; resetForTesting() (test-
+                                    only) flips the internal loaded flag for multi-scenario tests
     Database.php                   PDO connection factory (ERRMODE_EXCEPTION, no emulated prepares)
     Session.php                    Native PHP session bootstrap; HttpOnly cookie, Secure gated
                                     by APP_ENV=production, SameSite configurable
@@ -422,16 +429,34 @@ backend/
                                     schema_migrations table it creates automatically
     smoke-test.sh                  Runnable copy of the README's curl walkthrough, including
                                     a PATCH /api/photos/{id} step
+    package-for-deploy.sh           Shared-hosting packaging helper: runs `npm run build` +
+                                    `composer install --no-dev --optimize-autoloader`, then
+                                    assembles release/photomap-backend/ (curated: public/, src/,
+                                    migrations/, scripts/, fresh vendor/, composer.json/.lock,
+                                    .htaccess, config.php/.example, storage dirs — excludes
+                                    tests/, docker/, .env*, docker-compose.yml, phpunit.xml) and
+                                    release/domain.com/ (frontend dist/ + the Dreamhost
+                                    .htaccess/api/index.php stub); includes a hardcoded-path/URL
+                                    grep sweep as a warning
+  config.php.example                Template array of every setting .env.example documents, with
+                                    Dreamhost-specific inline guidance (DB host convention,
+                                    HTTPS/APP_ENV ordering pitfall, same-origin CORS/cookie
+                                    defaults); copy to config.php and fill in real values
+  .htaccess                         Deny-all (Require all denied, Apache 2.2 fallback) shipped
+                                    inside backend/ itself — defense-in-depth against
+                                    mod_userdir-style exposure of the private backend directory
+                                    on shared hosting
   tests/
     bootstrap.php, FakeGeocodeClient.php
     fixtures/                      Real sample images: corrupted, non-image-as-.jpg, small/large/
                                     tiny JPEGs, a WebP, a PNG with alpha
     Unit/                          CsrfMiddleware, FileValidator, GeocodeController, ImageProcessor,
                                     NominatimClient, NominatimRateLimiter, RateLimiter, SignedUrl,
-                                    StorageQuotaService (46 tests)
+                                    StorageQuotaService, Config (config.php/.env precedence — new,
+                                    see "Testing" below) (53 tests)
     Feature/                       Auth, Cors, Csrf, Geocode, Ownership, Photos, PhotoUpdate,
                                     ProductionCookie, Quota, RateLimit, SecurityFeature,
-                                    ShareLinks (63 tests) — each boots a real `php -S` subprocess
+                                    ShareLinks (64 tests) — each boots a real `php -S` subprocess
                                     and drives it over real HTTP
     Support/                       ServerProcess (subprocess lifecycle), HttpClient/HttpResponse
                                     (curl wrapper, now with patchJson()/options()),
@@ -494,8 +519,9 @@ only `lat`/`lon`.
 
 ## Testing
 
-PHPUnit 10. Run via `composer test` from `backend/`. As of this change: **109 tests, 261
-assertions, 0 failures** (46 Unit + 63 Feature), run twice for confirmation.
+PHPUnit 10. Run via `composer test` from `backend/`. As of this change: **117 tests, 274
+assertions, 0 failures** (53 Unit + 64 Feature), run twice via Docker (MySQL 8 + php:8.3) for
+stability.
 
 - **Unit tests** (`tests/Unit/`): CSRF token comparison logic; image resize/EXIF-orientation/
   no-upscale/corrupt-image-rejection behavior; finfo-based file-type sniffing; quota math
@@ -504,7 +530,11 @@ assertions, 0 failures** (46 Unit + 63 Feature), run twice for confirmation.
   against the quota; rate-limiter threshold logic; `NominatimRateLimiter` spacing; `SignedUrl`
   sign/verify/expiry/tamper-detection; `NominatimClient`'s wire behavior against a local fake
   socket server (`FakeHttpServer`); geocode rounding/caching via `FakeGeocodeClient` (real
-  Nominatim is never called in any automated test).
+  Nominatim is never called in any automated test); **`ConfigTest.php`** (new) — 7 tests covering
+  `config.php`-only, `.env`-only (regression), both-present precedence (`config.php` wins),
+  neither-present (defaults/`require()` throws), a malformed (non-array-returning) `config.php`,
+  a `config.php` with a genuine PHP parse error, and an end-to-end `Database::connect()` check
+  picking up `config.php`-sourced real test-DB credentials.
 - **Feature tests** (`tests/Feature/`): each test class boots a real `php -S` subprocess
   (`tests/Support/ServerProcess.php`) and drives it over real HTTP via curl
   (`tests/Support/HttpClient.php`). Covers auth flows (register/login/logout/me), CSRF
@@ -515,8 +545,12 @@ assertions, 0 failures** (46 Unit + 63 Feature), run twice for confirmation.
   isolation (404 not 403), quota exhaustion (a dedicated server instance configured with a small
   `STORAGE_QUOTA_BYTES`), rate limiting (a dedicated server instance with a short window), the
   full share-link lifecycle including "revoking a link immediately closes already-issued image
-  URLs from it," session cookie security attributes (`ProductionCookieFeatureTest`), and
-  confirming `storage/` itself is not web-reachable.
+  URLs from it," session cookie security attributes (`ProductionCookieFeatureTest`), confirming
+  `storage/` itself is not web-reachable, and (new) `SecurityFeatureTest::
+  testNoStrayConfigPhpShadowsEnvTestFixtures()` — asserts no stray `config.php` sits in the
+  backend root during the Feature suite (which would silently shadow `.env.test` for every test
+  in the suite) and that `.env.test`'s dedicated test-only session cookie name is genuinely the
+  one in use.
 - Not covered by the automated Feature tier: cache-hit/miss/rounding/rate-limiting-spacing
   behavior of `GET /api/geocode` against a live server, since the live server always wires the
   real `NominatimClient` and the plan requires never calling real Nominatim in tests — that
@@ -526,9 +560,21 @@ assertions, 0 failures** (46 Unit + 63 Feature), run twice for confirmation.
   genuine split-origin browser round-trip) is a documented manual/staging concern, not covered by
   the automated suite, which checks header/config-level correctness only.
 - Also verified: `php scripts/migrate.php` is idempotent and works against a genuinely fresh
-  database; `bash scripts/smoke-test.sh` passes all steps (including the new PATCH step) against
-  a real `php -S` dev server; `php -l` clean on every `src/`, `tests/`, `scripts/`, `public/`
-  file.
+  database (re-verified against MariaDB in addition to MySQL); `bash scripts/smoke-test.sh`
+  passes all steps (including the PATCH step) against a real `php -S` dev server; `php -l` clean
+  on every `src/`, `tests/`, `scripts/`, `public/` file, including all new/modified files for this
+  change.
+- **Shared-hosting deploy verification** (new, on-demand tooling, not wired into default CI):
+  `deploy/dreamhost/verify-apache-routing.sh` runs a Docker-based `php:8.3-apache` container
+  (`mod_rewrite` enabled, `AllowOverride All`) against a packaged `release/` artifact and checks
+  SPA-root rendering, `/share/:token` SPA fallback, `/api/*` routing to PHP, direct static-asset
+  serving, and directory-traversal blocking. A separate manual check pointed a plain Apache
+  container's docroot directly at `release/photomap-backend/` and confirmed
+  `GET /config.php.example` returns 403 via the shipped deny-all `.htaccess` (the `mod_userdir`
+  exposure mitigation). `backend/scripts/package-for-deploy.sh` was also run end-to-end and its
+  output's curated scope and `vendor/autoload.php` loadability verified. A full
+  `docker compose down -v && docker compose up --build` regression (root whole-stack Docker path)
+  confirmed no impact from the `config.php`-first check on `Config::load()`.
 
 # Docker and deployment tooling (root)
 
@@ -550,9 +596,41 @@ Two Docker Compose files exist, serving different purposes, both documented in t
   `docker/frontend/nginx.conf` provides the SPA fallback (`try_files ... /index.html`) needed
   for a real page load of `/share/:token`, and the `/api/` reverse-proxy config.
 
-Neither Docker path is the "required" way to run the project — the documented, primary paths
-remain native dev (three processes: MySQL, `php -S`, Vite) and a genuine production deployment
-(a static host for the frontend's `dist/` build, a plain PHP+MySQL host for the backend,
-potentially on different origins with `CORS_ALLOWED_ORIGINS`/`SESSION_COOKIE_SAMESITE`
-configured for that case). See the root `README.md` for the full three-path breakdown and the
-complete environment-variable reference tables for both the frontend and the backend.
+Neither Docker path is the "required" way to run the project — the documented paths are native
+dev (three processes: MySQL, `php -S`, Vite), the whole-stack Docker path above, and two flavors
+of genuine production deployment: a split-origin plain PHP+MySQL host (`CORS_ALLOWED_ORIGINS`/
+`SESSION_COOKIE_SAMESITE` configured for that case) and, new in this change, a same-origin
+shared-hosting deploy. See the root `README.md` for the full breakdown and the complete
+environment-variable reference tables for both the frontend and the backend.
+
+## Shared-hosting deployment tooling (`deploy/dreamhost/`, `backend/scripts/package-for-deploy.sh`)
+
+New in this change: a generic single-directory Apache/PHP/MySQL shared-hosting deployment path
+(Dreamhost is the named, worked example in the docs, but nothing here is Dreamhost-proprietary).
+See `docs/architecture.md`'s "Phase 4" section for the full design (two-tier sibling-directory
+layout, `config.php`/`.env` precedence, `mod_userdir` mitigation).
+
+```
+deploy/dreamhost/
+  .htaccess                 Domain-docroot .htaccess: rewrites /api/* to api/index.php, falls
+                             back to index.html for the SPA (client-side routing incl.
+                             /share/:token), with a commented-out opt-in HTTPS redirect
+  api/index.php             One-line stub: require __DIR__ . '/../../photomap-backend/public/index.php'
+  verify-apache-routing.sh  On-demand, Docker-based (php:8.3-apache, mod_rewrite, AllowOverride
+                             All) routing/security check against a packaged release/ artifact;
+                             not wired into default CI
+
+backend/
+  config.php.example        Template settings array (same keys as .env.example), with
+                             Dreamhost-specific inline guidance
+  .htaccess                  Deny-all, ships inside backend/ itself as defense-in-depth against
+                             mod_userdir-style exposure
+  scripts/package-for-deploy.sh   Builds the frontend + a production vendor/, assembles a
+                             curated release/photomap-backend/ + release/domain.com/ tree ready
+                             to upload over SFTP
+```
+
+`release/` (the packaging script's output directory) is gitignored at the repo root and is a
+transient build artifact, never committed. `backend/config.php` (the user's real, filled-in
+settings) is gitignored in `backend/.gitignore`, alongside the pre-existing `.env`/`.env.test`
+ignores.

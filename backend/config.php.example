@@ -1,0 +1,73 @@
+<?php
+
+declare(strict_types=1);
+
+// Copy this file to config.php (same directory) and fill in real values, then delete/ignore
+// .env — Config::load() checks for config.php first and, if present, uses it exclusively
+// (falling back to .env only when config.php doesn't exist). This is the recommended path for
+// shared hosting (e.g. Dreamhost) where hand-editing one PHP file over SFTP is easier than
+// managing a .env file, but it works identically anywhere Config::load() is used — it is not
+// Dreamhost-specific.
+//
+// This file is executed by PHP (require), not parsed as plain text/JSON, so even if it is ever
+// briefly reachable over the web by mistake, a request would execute it (producing no output,
+// since it just returns an array) rather than serve its contents as plaintext credentials. This
+// is defense-in-depth, not the only protection — see backend/.htaccess, which denies all direct
+// web access to this entire directory, and the two-tier deploy layout in the README that keeps
+// this whole directory outside the domain's web-reachable docroot in the first place.
+//
+// Every key below is documented in more detail in .env.example — this file lists the same
+// settings, just as a PHP array instead of a KEY=value text format.
+return [
+    // --- Database ---
+    // On Dreamhost, DB_HOST is a hostname the control panel gives you (NOT 127.0.0.1/localhost)
+    // -- typically something like "mysql.yourdomain.com". DB_NAME/DB_USER/DB_PASSWORD are the
+    // database, user, and password you create in the Dreamhost panel's MySQL section.
+    'DB_HOST' => 'mysql.yourdomain.com',
+    'DB_PORT' => '3306',
+    'DB_NAME' => 'photomap',
+    'DB_USER' => 'photomap',
+    'DB_PASSWORD' => 'change-me',
+
+    // --- App ---
+    // Leave at "development" until your domain's HTTPS (Let's Encrypt, via the Dreamhost panel)
+    // is confirmed working. Setting "production" before HTTPS is enabled makes the session
+    // cookie's Secure flag get sent, which browsers silently refuse to store over plain HTTP --
+    // login will appear to succeed but the session will not persist, with no visible error. See
+    // the README's "Deploying to Dreamhost" troubleshooting note before flipping this.
+    'APP_ENV' => 'production',
+    // Generate with: php -r 'echo bin2hex(random_bytes(32));'
+    'APP_SECRET' => 'change_me_to_a_random_32_byte_hex_string',
+
+    // Absolute path, outside any web-reachable directory. In the recommended two-tier Dreamhost
+    // layout, this is a sibling of the domain's docroot under your account home, e.g.
+    // /home/youruser/photomap-backend/storage -- never under /home/youruser/yourdomain.com/.
+    'STORAGE_PATH' => '/home/youruser/photomap-backend/storage',
+
+    // --- Uploads / quota ---
+    // 100 MB/account default quota -- sanity-check this against your Dreamhost plan's disk quota
+    // if you expect many accounts.
+    'MAX_UPLOAD_BYTES' => '26214400',
+    'STORAGE_QUOTA_BYTES' => '104857600',
+
+    // --- Nominatim (must include real contact info per Nominatim's usage policy) ---
+    'NOMINATIM_USER_AGENT' => 'Photomap/1.0 (contact: you@example.com)',
+
+    // --- Session ---
+    'SESSION_COOKIE_NAME' => 'photomap_session',
+
+    // --- Login rate limiting ---
+    'RATE_LIMIT_LOGIN_MAX_ATTEMPTS' => '5',
+    'RATE_LIMIT_LOGIN_WINDOW_SECONDS' => '900',
+
+    // --- Global Nominatim spacing (seconds between requests) ---
+    'NOMINATIM_MIN_INTERVAL_SECONDS' => '1',
+
+    // --- CORS / cookies ---
+    // A Dreamhost two-tier deploy (frontend + /api/ under the same domain via .htaccess routing)
+    // is same-origin by construction -- leave both of these at their simple same-origin
+    // defaults. Only fill these in for a genuinely split-origin deployment (frontend and backend
+    // on two different domains), which the Dreamhost deploy path in the README does not need.
+    'CORS_ALLOWED_ORIGINS' => '',
+    'SESSION_COOKIE_SAMESITE' => 'Lax',
+];
