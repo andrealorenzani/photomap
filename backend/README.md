@@ -132,8 +132,8 @@ defaults (empty / `Lax`).
    backend's `composer.json` `require` block lists the same set). Dreamhost lets you pick the PHP
    version per domain in its panel.
 
-2. **Build and stage a release locally** (needs Node/npm and Composer locally — Dreamhost itself
-   never needs to run either):
+2. **Build and stage a release locally** (needs Node/npm locally, plus either Composer or Docker
+   — Dreamhost itself never needs to run any of these):
 
    ```bash
    bash backend/scripts/package-for-deploy.sh
@@ -145,6 +145,12 @@ defaults (empty / `Lax`).
    `docker-compose.yml`, `phpunit.xml`, and includes a freshly built `vendor/`, the deny-all
    `.htaccess`, and `config.php.example`) and `release/domain.com/` (the frontend build plus the
    `.htaccess`/`api/index.php` stub from `deploy/dreamhost/`).
+
+   If `composer` isn't installed/on `PATH`, the script automatically falls back to running it via
+   the official `composer:2` Docker image (bind-mounting `backend/` and running as your own
+   user/group so the resulting `vendor/` isn't left root-owned) — so **either Composer or Docker**
+   installed locally is a prerequisite for this step, not both. If neither is available, the
+   script fails with a message pointing you at installing one of the two.
 
 3. **Upload via SFTP**: `release/photomap-backend/` to a private directory outside your domain's
    docroot (e.g. `~/photomap-backend/`), and the *contents* of `release/domain.com/` to your

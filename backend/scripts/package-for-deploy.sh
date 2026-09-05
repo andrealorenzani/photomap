@@ -34,7 +34,34 @@ log "Building frontend (npm run build)"
 ( cd "${REPO_ROOT}" && npm run build )
 
 log "Installing backend production dependencies (composer install --no-dev --optimize-autoloader)"
-( cd "${BACKEND_DIR}" && composer install --no-dev --optimize-autoloader )
+if command -v composer >/dev/null 2>&1; then
+  ( cd "${BACKEND_DIR}" && composer install --no-dev --optimize-autoloader )
+elif command -v docker >/dev/null 2>&1; then
+  log "Composer not found on PATH -- falling back to running it via the official composer:2 Docker image"
+  # --ignore-platform-reqs: the composer:2 image's own PHP build is a minimal one that lacks
+  # this project's *runtime* extensions (pdo_mysql/gd/exif/etc, checked by composer.json's
+  # `require` block) -- those are requirements of the target production host this release is
+  # bound for, not of the throwaway container used here purely to resolve/download vendor/. The
+  # --user flag keeps the resulting vendor/ owned by the invoking user rather than root, since
+  # this bind-mounts BACKEND_DIR directly.
+  docker run --rm --interactive \
+    --volume "${BACKEND_DIR}:/app" \
+    --user "$(id -u):$(id -g)" \
+    composer:2 install --no-dev --optimize-autoloader --ignore-platform-reqs
+else
+  cat >&2 <<'EOF'
+ERROR: Neither `composer` nor `docker` was found on PATH -- can't install backend production
+dependencies.
+
+Fix by installing ONE of the following, then re-run this script:
+  - Composer (PHP's dependency manager): https://getcomposer.org/download/
+  - Docker (used here as a fallback to run Composer without installing it natively):
+    https://docs.docker.com/get-docker/
+
+See backend/README.md's "Deploying to Dreamhost" section for the full deploy walkthrough.
+EOF
+  exit 1
+fi
 
 log "Clearing previous release/ output"
 rm -rf "${RELEASE_DIR}"

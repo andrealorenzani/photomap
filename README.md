@@ -99,6 +99,8 @@ example. Full details, rationale, and the file-by-file layout live in `backend/R
 2. Build and stage a release locally: `bash backend/scripts/package-for-deploy.sh`. This produces
    `release/photomap-backend/` (the backend, including a freshly built `vendor/`) and
    `release/domain.com/` (the frontend build plus an `.htaccess` and `api/index.php` stub).
+   Prerequisite: Node/npm, plus either Composer or Docker locally (if Composer isn't on `PATH`,
+   the script automatically falls back to running it via the official `composer:2` Docker image).
 3. Upload `release/photomap-backend/` via SFTP to a **private** directory outside your domain's
    mapped docroot (e.g. `~/photomap-backend/`), and the **contents** of `release/domain.com/` to
    your domain's docroot (e.g. `~/yourdomain.com/`).
