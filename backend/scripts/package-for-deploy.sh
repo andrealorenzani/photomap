@@ -35,7 +35,11 @@ log "Building frontend (npm run build)"
 
 log "Installing backend production dependencies (composer install --no-dev --optimize-autoloader)"
 if command -v composer >/dev/null 2>&1; then
-  ( cd "${BACKEND_DIR}" && composer install --no-dev --optimize-autoloader )
+  # --ignore-platform-reqs: this packages vendor/ to ship to the target Dreamhost host, never to
+  # run locally with this machine's own PHP -- so the machine running this script (a dev laptop,
+  # CI runner, etc.) isn't required to have the runtime extensions (pdo_mysql/gd/curl/exif/etc)
+  # that only the target host needs. Same rationale as the Docker fallback below.
+  ( cd "${BACKEND_DIR}" && composer install --no-dev --optimize-autoloader --ignore-platform-reqs )
 elif command -v docker >/dev/null 2>&1; then
   log "Composer not found on PATH -- falling back to running it via the official composer:2 Docker image"
   # --ignore-platform-reqs: the composer:2 image's own PHP build is a minimal one that lacks
