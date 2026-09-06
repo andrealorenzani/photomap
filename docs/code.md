@@ -307,56 +307,38 @@ datetime; datetime-only/no GPS; GPS without an offset-time tag; a HEIC sample; a
 truncated JPEG; a non-image file renamed `.jpg`; a pair of JPEGs just inside/outside the ~50m
 grouping radius (haversine-verified); a JPEG with GPS exactly `(0, 0)` for the Null Island rule.
 
-Coverage by file:
-- `grouping.test.ts` — coordinate-grouping boundary cases (haversine-verified), high-latitude
-  correctness.
-- `timeline.test.ts` — binning/intensity/range-selection as pure functions, zero-photos/
-  current-year default, single-day vs. multi-year spans.
-- `exifWorker.test.ts` — EXIF parsing against real fixtures (GPS+datetime, datetime-only, Null
-  Island, corrupted/non-image handling, missing offset-time tag), HEIC metadata handling (via
-  mocked `exifr.parse()` output — see "Known characteristics" above).
-- `exifOrientation.test.ts` — orientation-aware thumbnail/preview generation, including the
-  manual canvas-transform fallback path for orientations 2-8.
-- `exifWorkerPool.test.ts` — work distribution, progress tracking, cancellation.
-- `db.test.ts` — IndexedDB repository behavior, including quota-exceeded handling and
-  no-tombstone re-add after delete (uses `fake-indexeddb`).
-- `ingest.test.ts` — cache-hit skips re-parsing unchanged files; changed files re-parse;
-  client/server id reconciliation after `add()` returns a different id.
-- `photoStore.test.ts` — Zustand store state transitions, including searchFilters/reconcileId/
-  reassignLocation actions.
-- `authStore.test.ts` — session restore, register/login/logout/delete-account flows, and the
-  repository swap they trigger.
-- `stableId.test.ts` — deterministic per-file cache-key hashing.
-- `http.test.ts` — CSRF-token-once-per-session lifecycle, `credentials: 'include'`, typed
-  `ApiError` (413/422) surfacing.
-- `apiPhotoRepository.test.ts` — `ApiPhotoRepository` against a mocked backend, including
-  quota-exceeded and no-op `estimateUsage()`/`requestPersistence()`.
-- `filters.test.ts` — date-range/camera-make-model/has-location filter predicates.
-- `mapStyles.test.ts` — Detailed/Treasure Map preset config and `localStorage` persistence.
-- `mapView.test.tsx` — tile-layer switching between styles, draggable-marker and drop-target
-  wiring, `readOnly` disabling both.
-- `reassignLocation.test.ts` — optimistic update + rollback-on-error for drag-to-reassign, in
-  both repository implementations.
-- `router.test.tsx` — `/` vs. `/share/:token` matching, including trailing slash and encoded
-  token cases.
-- `sharePage.test.tsx` — `/share/{token}` renders from local component state only (asserts the
-  global store's `photos.size` stays 0 throughout), `readOnly` behavior, filters/style toggle
-  still available.
-- `components.test.tsx` — thumbnail strip sorting/deletion, full-size viewer, status panel,
-  privacy note, `TopBanner`'s login/register/logged-in states, registration-notice gating
-  (v1.0.0), and the "Discarded (No GPS)" label rename.
-- `adminUsers.test.ts` (v1.0.0) — pure helper coverage: query building, sort-state cycling,
-  share-link status formatting (existence+timestamp only, never a URL), status labels, byte
-  formatting.
-- `adminStore.test.ts` (v1.0.0) — admin session restore/login/logout state transitions.
-- `adminPage.test.tsx` (v1.0.0) — login gate, Users/Settings tab switching.
-- `adminUsersPanel.test.tsx` (v1.0.0) — search/filter/sort/pagination, activate-with-quota and
-  disable-with-confirmation flows.
-- `timelineStrip.test.tsx` (v1.0.0) — the `density|year|month|day` drill-down navigation level,
-  breadcrumbs, and axis labels, alongside the pre-existing unchanged density-mode behavior.
-- `timeline.test.ts` and `router.test.tsx` and `ingest.test.ts` (all pre-existing) gained v1.0.0
-  extensions: `computeYearBins`/`computeMonthBins`/`computeDayBins` coverage; the `/admin` route
-  match; and `gps_required`-triggered `gpsRequiredNotice` handling, respectively.
+Coverage, grouped by area (see the test files themselves under `test/` for exact names/cases —
+this is a map of what's covered, not a file-by-file index):
+- **Ingest pipeline**: EXIF parsing against real fixtures (GPS+datetime, datetime-only, Null
+  Island, corrupted/non-image handling, missing offset-time tag, HEIC via mocked `exifr.parse()`
+  output — see "Known characteristics" above), orientation-aware thumbnail/preview generation
+  including the manual canvas-transform fallback, worker-pool distribution/progress/cancellation,
+  per-file cache-key hashing, cache-hit/changed-file re-parse behavior, client/server id
+  reconciliation.
+- **Pure domain logic**: coordinate-grouping boundary cases (haversine-verified, high-latitude
+  correctness), timeline binning/intensity/range-selection including the calendar-axis
+  `computeYearBins`/`computeMonthBins`/`computeDayBins` layer, date-range/camera/has-location
+  filter predicates, Detailed/Treasure Map preset config + `localStorage` persistence.
+- **State/repositories**: IndexedDB repository behavior (quota-exceeded, no-tombstone re-add),
+  `ApiPhotoRepository` against a mocked backend (quota-exceeded, no-op
+  `estimateUsage()`/`requestPersistence()`), Zustand store transitions (`photoStore` including
+  searchFilters/reconcileId/reassignLocation, `authStore` session/register/login/logout/
+  delete-account and the repository swap it triggers, `adminStore` session transitions), the
+  shared HTTP client's CSRF-once-per-session/`credentials:'include'`/typed `ApiError` (413/422)
+  behavior.
+- **Components/pages**: map view (tile-layer switching, draggable markers, drop-target
+  reassignment, `readOnly` disabling both), drag-to-reassign optimistic-update/rollback in both
+  repository implementations, hand-rolled router matching (`/`, `/share/:token`, `/admin`,
+  trailing-slash/encoded-token cases), `SharePage` (renders from local component state only —
+  asserts the global store's `photos.size` stays 0 throughout — plus `readOnly` behavior),
+  thumbnail strip/full-size viewer/status panel/privacy note/`TopBanner` states, the
+  registration-notice modal gate and "Discarded (No GPS)" label, the `gps_required`-triggered
+  notice, and the timeline's `density|year|month|day` drill-down navigation with breadcrumbs/axis
+  labels.
+- **Admin console** (v1.0.0): pure helper coverage (query building, sort-state cycling, share-link
+  status formatting as existence+timestamp only never a URL, status labels, byte formatting),
+  login gate + Users/Settings tab switching, search/filter/sort/pagination, and
+  activate-with-quota/disable-with-confirmation flows.
 
 Not practical to automate in this environment, left as a manual checklist instead: real
 cross-browser drag-and-drop/folder-picker behavior, Leaflet map bounds-fitting in a live

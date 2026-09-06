@@ -650,105 +650,67 @@ affecting every endpoint that returns a float, not something introduced by this 
 
 ## Resolved architecture questions
 
-- **Does "zero network calls" contradict the mandated Leaflet + OpenStreetMap tile stack?**
-  No — the guarantee is scoped to photo data specifically; OSM tile requests are a disclosed,
-  expected exception (see above).
-- **Should IndexedDB cache original photo bytes or only derived images?** Only derived
-  thumbnail + preview images, never originals (see above).
-- **Is there a numeric performance/scale target for guest mode?** No hard target; the design
-  (worker pool, thumbnail/preview-only storage) targets typical personal libraries (hundreds to
-  a few thousand photos) as best-effort, with `navigator.storage.estimate()`/`persist()` used to
-  surface quota pressure rather than enforcing a hard cap.
-- **Share-link "create/rotate" semantics?** Single-active-link: `POST /api/share-links` revokes
-  the existing link (if any) and creates a new one, matching the original spec's singular wording
-  "this user's share token."
-- **How should uploaded/served photo images be protected — ownership-checked endpoint or
-  signed/expiring URL?** Signed, HMAC-based, time-limited URLs (15 min owner / 10 min share
-  context), regenerated fresh on every JSON response and never persisted; share-context URLs
-  additionally re-check revocation live on every fetch, not just at issuance.
-- **What serializes the global 1-req/sec Nominatim rate limit across PHP worker processes?**
-  A MySQL row lock (`SELECT ... FOR UPDATE`) on a sentinel row, not a filesystem `flock()`, since
-  MySQL is already a hard dependency and a DB lock works correctly across multiple processes.
-- **Does account deletion need to invalidate other active sessions for the same account
-  elsewhere?** No — out of scope; documented limitation, since no cross-session store exists in
-  this design.
-- **Is the 100MB per-account storage quota permanent product policy?** Not decided; enforced
-  exactly as specified, with permanence left as a future product decision.
-- **Should account-mode filter/search and drag-to-reassign be added at all, and for which
-  mode(s)?** Both modes — grounded in the fact that Phase 1's `PhotoRepository` interface already
-  included `updateLocation()`, built specifically for this purpose, and in the original spec's own
-  framing of these as "remaining core features from the original spec, now that both modes
-  exist."
-- **Should the public share view expose filters and the map-style toggle, or be strictly
-  minimal?** Filters and the style toggle remain available (both non-mutating); upload, delete,
-  and login/register remain excluded.
-- **`/share/{token}` routing: react-router-dom or hand-rolled?** Hand-rolled — see "Frontend:
-  hand-rolled router" above.
-- **Runtime-configurable API base URL vs. purely build-time?** Runtime `public/config.js`
-  layered over build-time defaults — the only way to satisfy "same static build, different
-  backend, no rebuild" while staying 100% static.
-- **Cross-origin cookie/CORS strategy?** `Session.php`'s `SameSite` became configurable (default
-  unchanged: `Lax`), plus a new opt-in `CorsMiddleware`/`CORS_ALLOWED_ORIGINS`. Both reverse-proxy
-  setups (native dev, Docker) are same-origin by design and never touch this; it exists purely for
-  a genuinely split-origin production deployment.
-- **Should logging in migrate guest-mode IndexedDB photos into the new account?** No — out of
-  scope for this version; guest and account data remain two separate namespaces, documented as a
-  known limitation.
-- **Should `PATCH /api/photos/{id}` be restricted to only currently-GPS-less photos?** No —
-  allowed for any owned photo, consistent with the other photo endpoints' unrestricted-within-
-  ownership design.
-- **Treasure Map's exact zoom cutoff and CSS filter recipe?** Locked as `maxZoom: 10` and CSS
-  filter `sepia(0.65) saturate(1.6) hue-rotate(-8deg) contrast(1.1)` plus a subtle inset vignette,
-  both config-driven via `VITE_MAP_*` env vars.
-- **Should the map style choice sync across devices for an account?** No — `localStorage` only
-  for this version.
-- **How was the client-generated vs. server-assigned photo id mismatch (an advisor-flagged gap
-  the plan's original draft missed) resolved?** `PhotoRepository.add()`'s signature changed from
-  `Promise<void>` to `Promise<PhotoRecord>`; `ingest/index.ts` reconciles the store entry via a
-  new `reconcileId(oldId, newRecord)` action whenever the returned id differs from the
-  client-generated one (a no-op in guest mode).
-- **Should the backend's EXIF-orientation handling, fed an already-recompressed EXIF-stripped
-  preview, be fixed or just documented as a limitation (another advisor-flagged gap)?** Fixed —
-  `exifWorker.ts` now applies orientation correction when generating the thumbnail/preview canvas
-  images, benefiting both modes and removing what would otherwise have become a permanent,
-  server-persisted data-quality bug in account mode.
-- **Merged single-webroot vs. two-tier sibling-directory shape for shared-hosting deploy?**
-  Two-tier: the entire `backend/` project lives in a private directory outside the domain's
-  mapped docroot, with only a one-line stub and the frontend build inside it — extends the
-  project's existing "storage outside the web root" invariant to the whole backend source tree.
-- **`config.php` additive vs. replacing `.env` everywhere?** Additive: `.env`/Docker/native-dev
-  paths are unchanged; `config.php` is a second, equivalent way to supply the same settings,
-  checked first by `Config::load()` when present.
-- **Commit `vendor/` vs. build it as part of deploy?** Never committed; built locally via
-  `composer install --no-dev --optimize-autoloader` before packaging/upload. SSH + `composer
-  install` remains a documented fallback for accounts without a local PHP/Composer setup.
-- **Does the shared-hosting mechanism need to be Dreamhost-specific?** No — it's generic
-  single-directory Apache/PHP/MySQL shared hosting; Dreamhost is the named, worked example in
-  docs because it's the host the user actually has.
-- **How is the `mod_userdir` home-directory exposure risk mitigated?** A deny-all
-  `backend/.htaccess` ships inside the private backend directory itself (so it travels with every
-  deploy regardless of host settings), plus an explicit manual-checklist test of the
-  `~username` URL path.
-- **Should the admin console share the guest-mode/account-mode frontend state or backend admin
-  auth reuse the existing user-session mechanism?** No to both — the admin console is a fully
-  separate frontend page/store/API tree (mirroring `SharePage`'s existing separation from
-  `photoStore`) and a structurally distinct backend auth check (`$_SESSION['admin']`, never
-  `$_SESSION['user_id']`), so admin and user identity can never be confused with each other.
-- **Should the admin-facing share-link indicator expose the actual shareable URL/token?** No —
-  `ShareLinkRepository::findActiveCreatedAtForUser()` only ever selects `created_at`; the token is
-  architecturally unreachable in that code path, not merely omitted from the response after being
-  fetched. Showing the real link would give the admin de facto access to a user's privately-shared
-  photos.
-- **Is the admin credential a reversible/encrypted secret or a one-way hash?** One-way
-  `password_hash()`/`password_verify()` (bcrypt), matching how user passwords are already
-  handled — deliberate, since it's a login credential, not a value ever needing recovery.
-- **Does "replace the timeline" mean rebuilding the existing density-heatmap logic from scratch?**
-  No — the existing canvas-based density-heatmap rendering was kept as the unchanged default view;
-  a calendar-axis (year/month/day) navigation/drill-down layer was added on top of it.
-- **Is the "notification email" for activation/disable a new field separate from the account's
-  login email?** No — the backend schema has no such column; the existing account/registration
-  email is reused, and the registration popup explains this rather than adding a new input.
-- **Is the per-account storage quota still a single flat env-var constant?** No, as of this
-  phase — it's resolved per-user (`users.storage_quota_bytes` if set, else
-  `app_settings.default_storage_quota_bytes`), both admin-configurable at runtime rather than
-  fixed at deploy time.
+Full rationale for each of these lives in the phase section referenced; this list is a fast index
+of the decision itself, not a repeat of the "why."
+
+- "Zero network calls" vs. the mandated Leaflet+OSM stack → scoped to photo data only; tile
+  requests are a disclosed exception (Phase 1).
+- IndexedDB caches derived thumbnail/preview images only, never original bytes (Phase 1).
+- No hard guest-mode performance/scale target — best-effort for typical personal libraries
+  (hundreds–thousands of photos), `navigator.storage` used for pressure signals, not a hard cap
+  (Phase 1).
+- Share links are single-active/"rotate" semantics, not multiple simultaneous links (Phase 2).
+- Photo image bytes are protected via signed, time-limited HMAC URLs, not an ownership-checked
+  streaming endpoint (Phase 2).
+- The global Nominatim rate limit is serialized via a MySQL row lock, not `flock()` (Phase 2).
+- Account deletion does not invalidate other active sessions elsewhere — no cross-session store
+  exists (Phase 2, still a known limitation).
+- The per-account storage quota is admin-configurable at runtime (site-wide default +
+  optional per-account override), not a fixed constant, as of v1.0.0 (Phase 5).
+- Filter/search and drag-to-reassign apply to both modes (Phase 3), grounded in Phase 1's
+  `PhotoRepository.updateLocation()` seam having been built for this purpose.
+- The public share view keeps filters and the map-style toggle available (non-mutating); upload,
+  delete, and login/register stay excluded (Phase 3).
+- `/share/{token}` (and `/admin`) routing is hand-rolled, not `react-router-dom` — consistent with
+  the backend's own minimal-dependency router (Phase 3).
+- The frontend API base URL is runtime-configurable (`public/config.js` over build-time
+  defaults) — the only way to keep a single static build deployable against different backends
+  with no rebuild (Phase 3).
+- Cross-origin cookie/CORS support (`SameSite` configurability, opt-in `CorsMiddleware`) exists
+  only for genuinely split-origin production deployments; both reverse-proxy dev/Docker setups are
+  same-origin and never touch it (Phase 3).
+- No guest-to-account photo migration on login/logout — two separate namespaces, by design
+  (Phase 3, still a known limitation).
+- `PATCH /api/photos/{id}` is allowed for any owned photo, not just currently-GPS-less ones,
+  consistent with the other photo endpoints (Phase 3).
+- Treasure Map's zoom cutoff/CSS filter recipe is locked and config-driven via `VITE_MAP_*`
+  (Phase 3); the map style choice is `localStorage`-only, not synced across devices.
+- The client-generated vs. server-assigned photo id mismatch (found during Phase 3's own review)
+  was fixed via `PhotoRepository.add()` returning the persisted record and a `reconcileId()` store
+  action (Phase 3).
+- The backend's EXIF-orientation handling (found during Phase 3's own review, since it was fed an
+  already-recompressed preview) was fixed in `exifWorker.ts` rather than left as a limitation,
+  since account mode now persists that preview permanently server-side (Phase 3).
+- Shared-hosting deploy uses a two-tier sibling-directory shape (backend project entirely outside
+  the domain's docroot), not a merged single-webroot-plus-`.htaccess`-deny shape (Phase 4);
+  the mechanism is generic Apache/PHP/MySQL, not Dreamhost-proprietary.
+- `config.php` is additive to `.env`, checked first by `Config::load()` when present, never
+  replacing the native-dev/Docker paths (Phase 4).
+- `vendor/` is never committed — always built locally (or via the documented Docker/SSH fallback)
+  immediately before packaging/upload (Phase 4).
+- The `mod_userdir` home-directory exposure risk is mitigated by a deny-all `backend/.htaccess`
+  shipped inside the private backend directory itself, plus a manual-checklist `~username` URL
+  test (Phase 4).
+- The admin console is a fully separate frontend page/store/API tree and a structurally distinct
+  backend auth check (`$_SESSION['admin']`, never `$_SESSION['user_id']`) — it never shares state
+  or a session mechanism with the main user-facing app (Phase 5).
+- The admin-facing share-link indicator is existence+timestamp only — `findActiveCreatedAtForUser()`
+  never selects `token`, so the raw URL is architecturally unreachable from that code path, not
+  merely filtered out afterward (Phase 5) — showing it would give the admin de facto access to a
+  user's privately-shared photos.
+- The admin credential is a one-way `password_hash()`/`password_verify()` hash, matching user
+  passwords, not a reversible/encrypted secret (Phase 5).
+- The v1.0.0 timeline change evolved the existing density-heatmap component with an added
+  calendar-axis drill-down layer, rather than rebuilding it from scratch (Phase 5).
+- The activation/disable "notification email" reuses the account's existing login email — there is
+  no separate schema column for it (Phase 5).

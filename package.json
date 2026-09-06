@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "release": "bash backend/scripts/package-for-deploy.sh"
   },
   "dependencies": {
     "exifr": "^7.1.3",

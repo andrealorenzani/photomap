@@ -254,7 +254,6 @@ an account, unlike photo data itself.
   photo editing, mobile native apps, payment/billing.
 
 ## Open product questions
-None currently open. The per-account storage quota question (previously open: is a fixed 100MB
-cap permanent policy?) is resolved as of v1.0.0 — the quota is no longer a fixed constant at all;
-it's an admin-configurable site-wide default with an optional per-account override, so the
-"how much" decision now lives with whoever runs the deployment rather than in the codebase.
+None currently open. (The storage quota's "how much" question was resolved as of v1.0.0: it's no
+longer a fixed constant, but an admin-configurable site-wide default with an optional per-account
+override.)

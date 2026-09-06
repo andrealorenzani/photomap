@@ -133,10 +133,12 @@ defaults (empty / `Lax`).
    version per domain in its panel.
 
 2. **Build and stage a release locally** (needs Node/npm locally, plus either Composer or Docker
-   — Dreamhost itself never needs to run any of these):
+   — Dreamhost itself never needs to run any of these). This step is host-agnostic — see the root
+   `README.md`'s "Building a release" section — run it from the repo root as:
 
    ```bash
-   bash backend/scripts/package-for-deploy.sh
+   npm run release
+   # equivalent to: bash backend/scripts/package-for-deploy.sh
    ```
 
    This runs `npm run build` and `composer install --no-dev --optimize-autoloader`, then

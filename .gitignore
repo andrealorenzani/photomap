@@ -5,6 +5,10 @@ release
 *.local
 tsconfig.tsbuildinfo
 
+# Coordinator pipeline's transient crash/session-limit resumability state (not project history —
+# see docs/plans.md for the permanent record of finished changes).
+.claude/state/
+
 # Editor/OS cruft
 .DS_Store
 .vscode/*
