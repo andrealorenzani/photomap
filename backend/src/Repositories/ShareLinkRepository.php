@@ -63,4 +63,24 @@ final class ShareLinkRepository
     {
         return $this->findActiveByToken($token) !== null;
     }
+
+    /**
+     * Admin-support existence/timestamp indicator only — deliberately selects nothing but
+     * `created_at`. The admin console must never see a user's actual share token/URL (which
+     * would hand the admin real, bearer-capable viewing access to that user's shared photos
+     * without their knowledge); see docs/plans.md for the reasoning behind this restriction.
+     *
+     * @return array{createdAt: string}|null
+     */
+    public function findActiveCreatedAtForUser(int $userId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT created_at FROM share_links WHERE user_id = ? AND revoked_at IS NULL
+             ORDER BY created_at DESC LIMIT 1'
+        );
+        $stmt->execute([$userId]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : ['createdAt' => $row['created_at']];
+    }
 }

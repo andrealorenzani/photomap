@@ -15,7 +15,7 @@ final class ShareLinksFeatureTest extends FeatureTestCase
     public function testCreateShareLinkAndFetchWithZeroCookies(): void
     {
         [, $email, $csrf] = $this->registerAndLogin();
-        $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
+        $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
 
         $create = $this->http->postJson('/api/share-links', [], ['X-CSRF-Token: ' . $csrf]);
         $this->assertSame(201, $create->status);
@@ -57,7 +57,7 @@ final class ShareLinksFeatureTest extends FeatureTestCase
     public function testRevokeImmediatelyInvalidatesShareLinkAndItsImageUrls(): void
     {
         [, , $csrf] = $this->registerAndLogin();
-        $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
+        $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
 
         $create = $this->http->postJson('/api/share-links', [], ['X-CSRF-Token: ' . $csrf]);
         $token = $create->json()['token'];

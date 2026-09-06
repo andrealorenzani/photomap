@@ -10,7 +10,7 @@ export function StatusPanel() {
       <div className="status-panel__counts">
         <span>Processed: {status.processed}</span>
         <span>With GPS: {status.withGPS}</span>
-        <span>Without GPS: {status.withoutGPS}</span>
+        <span>Discarded (No GPS): {status.withoutGPS}</span>
         {status.skipped > 0 && <span>Skipped/unreadable: {status.skipped}</span>}
         {status.uploadFailures > 0 && <span>Not saved: {status.uploadFailures}</span>}
       </div>
@@ -22,6 +22,11 @@ export function StatusPanel() {
       {status.storageWarning && (
         <div className="status-panel__warning" role="alert">
           {status.storageWarning}
+        </div>
+      )}
+      {status.gpsRequiredNotice && (
+        <div className="status-panel__gps-required" role="alert">
+          {status.gpsRequiredNotice}
         </div>
       )}
     </div>

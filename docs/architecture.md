@@ -6,10 +6,15 @@ Photomap now consists of two projects that are wired together at runtime, deploy
 independently:
 
 - A frontend project (TypeScript + Vite + React) at the repo root, implementing both guest mode
-  (Phase 1) and account mode (wired in Phase 3), plus a hand-rolled two-route router, a treasure-
-  map basemap style, filter/search, and drag-to-reassign.
+  (Phase 1) and account mode (wired in Phase 3), a hand-rolled three-route router (`/`,
+  `/share/:token`, and — new in Phase 5/v1.0.0 — `/admin`), a treasure-map basemap style,
+  filter/search, drag-to-reassign, a calendar-axis drill-down layer on the timeline, and a fully
+  separate admin console page/store.
 - A standalone backend project (PHP 8.x + MySQL) at `backend/`, implementing the accounts API
-  (Phase 2) plus a new `PATCH /api/photos/{id}` endpoint and optional CORS support (Phase 3).
+  (Phase 2), a `PATCH /api/photos/{id}` endpoint and optional CORS support (Phase 3), a
+  shared-hosting/Dreamhost deployment path (Phase 4), and — new in Phase 5/v1.0.0 — registration
+  approval status, admin-configurable storage quotas, a separate `/api/admin/*` API, GPS-required
+  account-mode uploads, and email notifications.
 
 They remain two independently deployable projects with no shared code — the frontend talks to
 the backend only over its JSON HTTP API (`fetch`, `credentials: 'include'`), never anything
@@ -485,6 +490,164 @@ Root `docker-compose.yml`, `backend/docker-compose.yml`, and native dev both con
 exactly as before — `Config::load()`'s new `config.php`-first check is a no-op in all of them,
 since no `config.php` file is ever present there.
 
+## Phase 5 — Registration approval, admin console, GPS-required uploads, calendar-heatmap timeline (v1.0.0)
+
+This phase adds an admin-approval gate on top of the existing accounts backend, a fully separate
+`/admin` console (backend API + frontend page), a stricter GPS requirement on account-mode
+uploads, and a calendar-axis drill-down layer on top of the existing timeline heatmap. It changes
+no guest-mode behavior at all, and is additive to every prior phase's design.
+
+### Backend: account status, quotas, and app-wide settings
+
+Migration `0007_add_user_status_and_quota.sql` adds `users.status`
+(`ENUM('pending','active','disabled')`, default `pending`), `users.storage_quota_bytes`
+(nullable `BIGINT UNSIGNED` — `NULL` means "use the site-wide default"), and
+`users.approved_at`, plus indexes on `status` and `created_at` (backing the admin user list's
+filter/sort). The same migration runs a one-time `UPDATE users SET status = 'active' WHERE
+status = 'pending'` to grandfather every pre-existing row — since new registrations from this
+point forward insert `'pending'` explicitly via `AuthController::register()`, this backfill only
+ever touches rows that existed before the migration ran, never a genuinely new pending
+registration made after it. Migration `0008_create_app_settings.sql` adds a singleton
+`app_settings` table (`id` fixed to `1` via a `CHECK` constraint) holding
+`default_storage_quota_bytes` and `uploads_enabled`, seeded with a 100MB default and uploads
+enabled.
+
+`StorageQuotaService` now resolves a per-user quota (the user's own `storage_quota_bytes` if set,
+else `app_settings.default_storage_quota_bytes`) instead of a single flat env-var constant.
+
+### Backend: admin authentication is a structural sibling of user auth, not a variant of it
+
+The admin operator is a single hardcoded identity, not a `users` row: `ADMIN_USERNAME` and
+`ADMIN_PASSWORD_HASH` (a `password_hash()`/bcrypt hash — never a reversible/encrypted secret,
+since it's a login credential, not a value ever needing recovery) live in the backend
+config (`.env` or `config.php`, same precedence as every other setting). `AdminAuthController`
+verifies with `password_verify()`, sets a distinct `$_SESSION['admin'] = true` flag (never
+`$_SESSION['user_id']`, so an admin session and a user session can never be confused with each
+other), is rate-limited the same way login already was, and uses a timing-safe dummy-hash
+comparison when the submitted username doesn't match the configured one, so a wrong-username
+attempt takes the same time as a wrong-password one (no username-enumeration side channel).
+`AdminAuthMiddleware` gates every `/api/admin/*` route except login: if `ADMIN_USERNAME`/
+`ADMIN_PASSWORD_HASH` are unset it fails every admin route with `503 admin_not_configured`
+(distinguishing "the feature isn't set up" from "your credentials are wrong") without touching
+any other route in the app — registration, login, uploads, and sharing all work identically with
+no admin configuration present at all.
+
+Routes (`Bootstrap.php`): `POST /api/admin/login` (CSRF only), `POST /api/admin/logout`,
+`GET /api/admin/me`, `GET /api/admin/users`, `POST /api/admin/users/{id}/activate`,
+`POST /api/admin/users/{id}/disable`, `GET /api/admin/settings`, `PATCH /api/admin/settings`,
+`GET /api/admin/stats` (all but login also require `AdminAuthMiddleware`, and all
+state-changing ones also require `CsrfMiddleware`, exactly like every other mutating route).
+
+### Backend: two `AccountStatusMiddleware` instances, not one
+
+`AccountStatusMiddleware` is parameterized by a list of statuses it blocks, and is wired twice in
+`Bootstrap.php`: a broad instance (`blockedStatuses: ['disabled']`) attached to every existing
+authenticated route, and a narrow instance (`blockedStatuses: ['disabled', 'pending']`) attached
+only to `POST /api/photos`. A `pending` account can therefore do everything an `active` account
+can except upload; a `disabled` account is blocked everywhere. Both run after `AuthMiddleware`
+(so a missing session is still a plain 401, not an account-status error) and before
+`CsrfMiddleware` (so a blocked request gets its specific `account_pending`/`account_disabled`
+error code even if it also lacks a CSRF token).
+
+### Backend: the admin share-link indicator is existence-only by construction, not by filtering
+
+`ShareLinkRepository::findActiveCreatedAtForUser()` — the only method the admin code path ever
+calls — `SELECT`s just `created_at` from the active share-link row, never `token`. The raw
+shareable URL is therefore architecturally unreachable from `AdminUsersController`: there is no
+variable anywhere in that request's lifecycle holding the token value to (mis)serialize, rather
+than a token being fetched and then stripped before the JSON response is built. The admin
+frontend's `AdminUsersPanel` correspondingly only ever renders "has a link, created at <time>",
+never a URL. This was a deliberate closing of a privacy gap identified during planning: showing
+the admin the actual link would hand them de facto access to view that account's privately-shared
+photos, which the product's private-by-default model does not intend to allow.
+
+### Backend: mailer abstraction
+
+A `MailerInterface` (`send(string $to, string $subject, string $body): void`) has one production
+implementation, `PhpMailMailer` (PHP's built-in `mail()` — no SMTP library dependency), and two
+test doubles, `FakeMailer`/`FailingFakeMailer`. `Bootstrap::resolveDefaultMailer()` returns the
+fake when `MAIL_TRANSPORT=fake` is set in the environment (used by the test suite's
+`.env.test`), otherwise the real mailer — guarded with `class_exists()` so a `--no-dev` production
+install (where the test-only fake class doesn't exist) can never fatal on this check. Every email
+send (new-registration-to-admin, activation-to-user, disable-to-user) is wrapped in a catch-and-
+log; a mail failure never blocks the registration, activation, or disable action that triggered
+it.
+
+### Backend: GPS-required uploads
+
+`PhotosController::store()` now rejects an upload with `422 gps_required` if the parsed/validated
+photo has no usable GPS coordinates, for account-mode uploads only — guest mode never calls this
+endpoint at all, so it is structurally unaffected regardless of this change.
+
+### Frontend: admin console is a fully separate page/store/API tree
+
+Mirroring how `SharePage.tsx` is already kept separate from the main app's global photo state, the
+admin console never touches `photoStore`/`authStore`: a third route, `/admin` (added to the
+existing hand-rolled `Router.tsx`), renders `src/pages/AdminPage.tsx`, backed by its own Zustand
+store (`src/state/adminStore.ts`, session states `idle|checking|authenticated|anonymous`) and its
+own thin API wrapper module (`src/lib/api/adminApi.ts`, built on the same shared CSRF/`http.ts`
+mechanism every other API module uses). `src/components/admin/` holds
+`AdminLoginForm.tsx`/`AdminUsersPanel.tsx`/`AdminSettingsPanel.tsx`; `src/lib/adminUsers.ts` holds
+pure helpers (query building, sort-state cycling, share-link/status/byte formatting).
+
+### Frontend: registration notice popup
+
+`src/components/RegistrationNoticeModal.tsx` is wired into `TopBanner.tsx`'s registration form:
+submitting no longer calls `register()` directly — it opens the modal, and only an explicit
+"I understand, create my account" acknowledgement calls `register()`. The modal's content
+resolves the plan's two settled ambiguities directly: it never asks for a separate notification
+email (there's no such field in the schema — the account's own email is reused), and its privacy
+language deliberately says "private by default, shared only via a link you control" rather than
+the original request's "publicly visible on the internet" framing, since the latter overstates
+this product's actual exposure model.
+
+### Frontend: GPS-required handling and the "Discarded (No GPS)" label
+
+`types.ts` gained an optional `IngestStatus.gpsRequiredNotice: string` field, set by
+`lib/ingest/index.ts` when it catches an `ApiError` with `code === 'gps_required'` — handled as
+its own distinct branch (mirroring the pre-existing `storageWarning`/quota-exceeded branch)
+rather than a new counter, specifically to avoid changing the shape of `IngestStatus` literals
+that ~8 pre-existing test files construct directly. `StatusPanel.tsx`'s "Without GPS" counter
+label was renamed to "Discarded (No GPS)"; this label is shared by both modes' status panel
+(there is only one `StatusPanel` component), even though only account-mode uploads are actually
+discarded server-side — guest mode still retains and displays GPS-less photos exactly as before,
+just under the renamed label.
+
+### Frontend: timeline calendar-axis drill-down, evolved not rewritten
+
+`lib/timeline.ts` gained `computeYearBins`/`computeMonthBins`/`computeDayBins`, `yearsPresent`,
+`MONTH_LABELS`, and an optional `label` field on `TimelineBin` — pure functions alongside the
+pre-existing density-binning logic, not a replacement for it. `TimelineStrip.tsx` gained a
+`density|year|month|day` navigation level with breadcrumbs and an axis-label row under the
+canvas; the original adaptive density-heatmap rendering remains the unchanged default view.
+Selecting a bin drills down one level at `year`/`month`, and applies the existing date-filter/
+thumbnail-strip behavior at `day` level (or in the original, unchanged density mode) — the same
+interaction contract as before, just reachable one level deeper.
+
+### Test-infrastructure fixes found and made during this phase (not feature-logic changes)
+
+An audit of an initially non-deterministic backend test suite root-caused and fixed three
+test-infrastructure bugs, none of them defects in the new feature code itself:
+
+- `tests/Support/ServerProcess.php`'s `.env.test` parser only stripped double quotes, leaving a
+  literal single-quote character attached to `ADMIN_PASSWORD_HASH` in the spawned test server's
+  environment and breaking `password_verify()` for every admin-auth Feature test. Fixed to strip
+  either a matching single- or double-quote pair.
+- `StorageQuotaService::reserveAndInsert()` had no handling for a genuine MySQL deadlock
+  (SQLSTATE `40001`) under concurrent same-user uploads; the transaction body was extracted into a
+  private `attemptReserveAndInsert()` and wrapped in a retry-with-backoff loop (up to 3 attempts)
+  in the public method.
+- One Feature test reused a single HTTP client/cookie jar across two different logged-in users,
+  silently invalidating the first user's CSRF token before it was used; fixed with an independent
+  `HttpClient` per user, matching the pattern already used elsewhere in the suite.
+
+A fourth, unrelated latent bug was also found and fixed globally rather than patched around in one
+test: `Http/JsonResponse.php`'s single shared `json_encode()` call lacked
+`JSON_PRESERVE_ZERO_FRACTION`, so a whole-number float (e.g. `lat`/`lon` cast to `(float)` in
+`PhotoPresenter`) silently serialized without a decimal point and round-tripped back as an int —
+newly exposed by new tests using round-number coordinates, but a pre-existing contract bug
+affecting every endpoint that returns a float, not something introduced by this phase's own code.
+
 ## Resolved architecture questions
 
 - **Does "zero network calls" contradict the mandated Leaflet + OpenStreetMap tile stack?**
@@ -566,3 +729,26 @@ since no `config.php` file is ever present there.
   `backend/.htaccess` ships inside the private backend directory itself (so it travels with every
   deploy regardless of host settings), plus an explicit manual-checklist test of the
   `~username` URL path.
+- **Should the admin console share the guest-mode/account-mode frontend state or backend admin
+  auth reuse the existing user-session mechanism?** No to both — the admin console is a fully
+  separate frontend page/store/API tree (mirroring `SharePage`'s existing separation from
+  `photoStore`) and a structurally distinct backend auth check (`$_SESSION['admin']`, never
+  `$_SESSION['user_id']`), so admin and user identity can never be confused with each other.
+- **Should the admin-facing share-link indicator expose the actual shareable URL/token?** No —
+  `ShareLinkRepository::findActiveCreatedAtForUser()` only ever selects `created_at`; the token is
+  architecturally unreachable in that code path, not merely omitted from the response after being
+  fetched. Showing the real link would give the admin de facto access to a user's privately-shared
+  photos.
+- **Is the admin credential a reversible/encrypted secret or a one-way hash?** One-way
+  `password_hash()`/`password_verify()` (bcrypt), matching how user passwords are already
+  handled — deliberate, since it's a login credential, not a value ever needing recovery.
+- **Does "replace the timeline" mean rebuilding the existing density-heatmap logic from scratch?**
+  No — the existing canvas-based density-heatmap rendering was kept as the unchanged default view;
+  a calendar-axis (year/month/day) navigation/drill-down layer was added on top of it.
+- **Is the "notification email" for activation/disable a new field separate from the account's
+  login email?** No — the backend schema has no such column; the existing account/registration
+  email is reused, and the registration popup explains this rather than adding a new input.
+- **Is the per-account storage quota still a single flat env-var constant?** No, as of this
+  phase — it's resolved per-user (`users.storage_quota_bytes` if set, else
+  `app_settings.default_storage_quota_bytes`), both admin-configurable at runtime rather than
+  fixed at deploy time.

@@ -65,4 +65,21 @@ describe('Router (hand-rolled path matcher)', () => {
     await waitFor(() => expect(screen.getByTestId('share-page')).toBeInTheDocument());
     expect(screen.queryByLabelText('Select a photo folder')).not.toBeInTheDocument();
   });
+
+  it('renders the self-contained admin console at "/admin", touching neither the main App nor the guest-mode store', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/admin/me')) return Promise.resolve(jsonResponse({ error: 'unauthorized' }, 401));
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    setPath('/admin');
+    render(<Router />);
+
+    await waitFor(() => expect(screen.getByTestId('admin-page')).toBeInTheDocument());
+    expect(screen.queryByLabelText('Select a photo folder')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('share-page')).not.toBeInTheDocument();
+    expect(usePhotoStore.getState().photos.size).toBe(0);
+    expect(useAuthStore.getState().status).toBe('idle');
+  });
 });

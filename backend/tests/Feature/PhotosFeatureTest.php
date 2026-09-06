@@ -52,16 +52,35 @@ final class PhotosFeatureTest extends FeatureTestCase
         $this->assertCount(1, $list->json()['photos']);
     }
 
-    public function testGpslessUploadAcceptedWithNullCoordinates(): void
+    public function testGpslessUploadIsRejectedWithGpsRequired(): void
     {
+        // As of the admin-approval-gate/GPS-required release, account-mode uploads without
+        // GPS are rejected server-side (defense-in-depth for the client-side discard) rather
+        // than accepted as a valid no-GPS photo.
         [, , $csrf] = $this->registerAndLogin();
 
         $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
 
-        $this->assertSame(201, $upload->status);
-        $body = $upload->json();
-        $this->assertNull($body['lat']);
-        $this->assertNull($body['lon']);
+        $this->assertSame(422, $upload->status);
+        $this->assertSame('gps_required', $upload->json()['error']);
+
+        $list = $this->http->get('/api/photos');
+        $this->assertCount(0, $list->json()['photos']);
+    }
+
+    public function testNullIslandCoordinatesAreTreatedAsNoGpsAndRejected(): void
+    {
+        [, , $csrf] = $this->registerAndLogin();
+
+        $upload = $this->http->postMultipart(
+            '/api/photos',
+            ['lat' => '0', 'lon' => '0'],
+            ['photo' => $this->fixturePath('small-800x600.jpg')],
+            ['X-CSRF-Token: ' . $csrf]
+        );
+
+        $this->assertSame(422, $upload->status);
+        $this->assertSame('gps_required', $upload->json()['error']);
     }
 
     public function testTextFileRenamedJpgIsRejectedByContentSniffing(): void
@@ -79,7 +98,7 @@ final class PhotosFeatureTest extends FeatureTestCase
         [, , $csrf] = $this->registerAndLogin();
 
         $before = $this->countStoredFiles();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('corrupted.jpg')], ['X-CSRF-Token: ' . $csrf]);
+        $upload = $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('corrupted.jpg')], ['X-CSRF-Token: ' . $csrf]);
         $after = $this->countStoredFiles();
 
         $this->assertSame(422, $upload->status);
@@ -97,7 +116,7 @@ final class PhotosFeatureTest extends FeatureTestCase
         copy($this->fixturePath('small-800x600.jpg'), sys_get_temp_dir() . '/evil-source.jpg');
         rename(sys_get_temp_dir() . '/evil-source.jpg', $maliciousPath);
 
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $maliciousPath], ['X-CSRF-Token: ' . $csrf]);
+        $upload = $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $maliciousPath], ['X-CSRF-Token: ' . $csrf]);
         @unlink($maliciousPath);
 
         $this->assertSame(201, $upload->status);
@@ -132,7 +151,7 @@ final class PhotosFeatureTest extends FeatureTestCase
     {
         [, , $csrf] = $this->registerAndLogin();
 
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small.webp')], ['X-CSRF-Token: ' . $csrf]);
+        $upload = $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('small.webp')], ['X-CSRF-Token: ' . $csrf]);
 
         if (ImageProcessor::isWebpSupported()) {
             $this->assertSame(201, $upload->status, $upload->body);
@@ -145,7 +164,7 @@ final class PhotosFeatureTest extends FeatureTestCase
     public function testSignedImageUrlServesAndRejectsTamperedSignature(): void
     {
         [, , $csrf] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
+        $upload = $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
         $previewUrl = $upload->json()['previewUrl'];
 
         $ok = $this->http->get($previewUrl);
@@ -164,7 +183,7 @@ final class PhotosFeatureTest extends FeatureTestCase
     public function testDeletePhotoRemovesRowAndFiles(): void
     {
         [, , $csrf] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
+        $upload = $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
         $id = $upload->json()['id'];
 
         $row = $this->pdo->query("SELECT storage_path, thumbnail_path FROM photos WHERE id = {$id}")->fetch();

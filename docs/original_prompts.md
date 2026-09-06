@@ -175,3 +175,28 @@ No clarifying questions were asked back to the project owner during planning —
 "Use the coordinator to change everything so that I can easily deploy this on a cloud host. In particular I use dreamhost, therefore I want just to upload the files into the right directory and write a config.php file for the database location and everything should work."
 
 No clarifying questions were asked back to the user during planning — all open questions were resolved internally from the four domain briefings plus an advisor pass. See the "Deep Dives" section of the corresponding plan in `docs/plans.md` for the full record of every question and its resolution.
+
+---
+
+## 2026-09-06 — Registration approval, admin console, GPS-required uploads, and calendar heatmap timeline (v1.0.0)
+
+Yesterday you (a coordinator agent instance) ran Photomap release v1.0.0 end to end: you gathered product-owner/architect/developer/tester briefings, composed a plan, had the advisor sanity-check it (one revision cycle fixed a privacy leak in admin share-link visibility, admin session hardening, and boot-time config-absence handling), and started the implementer. The implementer got partway through (migrations applied, backend controllers/services/tests written) and was about to run the backend test suite when the session hit its rate limit and both the implementer and the coordinator process were killed. The original plan file in scratchpad is gone (that temp directory was session-scoped and has been cleaned up), so you must reconstruct current state directly from the working tree rather than assuming anything.
+
+Your job now: audit what's actually been implemented, finish whatever remains (backend and frontend), make sure tests pass, then run the documenter. Do not restart planning from scratch or re-run the product-owner/architect/developer/tester/advisor briefings — the plan is finalized; treat this as resuming implementation, not redesigning.
+
+The finalized plan (from yesterday's advised version) covers these v1.0.0 changes:
+
+1. Registration no longer grants immediate upload access — new accounts require admin approval before uploads work. Existing pre-1.0.0 users are grandfathered to active/approved status.
+2. New secret admin page at `/admin`, protected by a unique username/password whose credential is stored as a `password_hash()` hash (NOT reversible encryption) in the config file — this was the deliberate, correct choice since it's a login credential. Clear step-by-step instructions for generating that hash must exist in docs/README (check if already written).
+   a. Admin can activate a user and set their storage quota, see an existence/timestamp indicator of whether the user has an active share link (deliberately NOT the actual shareable URL/token itself — showing the real link would hand the admin de facto access to view that user's private shared photos, which the advisor flagged as a privacy leak; this was corrected during yesterday's revision, so verify the current code does NOT expose the raw share URL to admins), and can disable a user's account.
+   b. New registration sends an email to a configurable admin address prompting review/activation.
+   c. Admin user list is searchable, filterable, and sortable by registration date.
+   d. Admin general settings page: default storage quota for new users, global upload enable/disable toggle, and stats (user count, photos uploaded count, etc).
+3. A registration-time popup stating: activation requires admin approval before uploads work; accurate (not overstated) language about photo visibility — the original user request said "publicly visible on the internet" but yesterday's briefings flagged that as misleading given the app's actual private-by-default + revocable share-link architecture, so the resolved wording says photos are private by default with no public listing/search, shared only via a link the user controls; the user must supply a notification email (for activation/deactivation notices). The popup also clarifies Guest Mode uploads nothing and therefore can't be shared with friends.
+4. Activation sends an email to the registered user.
+5. GPS-less photo uploads are discarded (not uploaded) for logged-in/account-mode users only — guest mode behavior is unchanged. The "Without GPS" UI section/label becomes "Discarded (No GPS)".
+6. Timeline UI overhaul: replace the current timeline with a calendar-axis (year/month/day) view combined with a heatmap of photo density over time.
+
+In addition, resolve two implementation-detail ambiguities that were settled by reading the existing codebase rather than by asking the user (recorded above in the plan's Deep Dives): the "notification email" mentioned in item 3 reuses the existing account email rather than adding a new field (no schema column exists for a separate one), and the timeline overhaul in item 6 was implemented by evolving the existing density-heatmap timeline component with an added calendar-axis drill-down layer, rather than rebuilding it from scratch.
+
+Please update all docs to reflect the completed v1.0.0 state now that implementation and independent verification are both done.

@@ -2,6 +2,7 @@ import { isUsableGPS, type PhotoRecord } from '../../types';
 import { gridKey } from '../grouping';
 import { stableIdForFile, relativePathOf } from '../stableId';
 import { photoRepository, StorageQuotaExceededError } from '../db';
+import { ApiError } from '../api/http';
 import { parseFiles, type ParseFilesHandle, type WorkerFactory } from '../exifWorkerPool';
 import { usePhotoStore } from '../../state/photoStore';
 
@@ -128,6 +129,18 @@ export function ingestFiles(rawFiles: File[], options: IngestOptions = {}): Inge
                 usePhotoStore.getState().setStatus({
                   storageWarning:
                     'Storage is full: further photos in this batch will still be shown for this session but will not be saved, and will need to be re-selected after a page reload.',
+                });
+                return;
+              }
+
+              // Account-mode uploads with no GPS data are discarded outright by the backend
+              // (422 gps_required) rather than accepted as ungeotagged — guest mode is
+              // unaffected (IndexedDbPhotoRepository never throws this). Surfaced as a distinct,
+              // clear notice rather than lumped in with the generic uploadFailures/storageWarning
+              // path below, mirroring the quota-exceeded handling above.
+              if (err instanceof ApiError && err.code === 'gps_required') {
+                usePhotoStore.getState().setStatus({
+                  gpsRequiredNotice: `"${file.name}" was discarded: account uploads require GPS location data (guest mode has no such requirement).`,
                 });
                 return;
               }

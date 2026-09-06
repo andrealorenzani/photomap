@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useAuthStore } from '../state/authStore';
 import { createShareLink } from '../lib/api/shareLinksApi';
+import { RegistrationNoticeModal } from './RegistrationNoticeModal';
 import './TopBanner.css';
 
 function LoggedOutForm() {
@@ -8,6 +9,7 @@ function LoggedOutForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showRegistrationNotice, setShowRegistrationNotice] = useState(false);
   const login = useAuthStore((s) => s.login);
   const register = useAuthStore((s) => s.register);
   const error = useAuthStore((s) => s.error);
@@ -15,15 +17,31 @@ function LoggedOutForm() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (mode === 'register') {
+      // The registration-time notice must be seen and acknowledged before an account is
+      // actually created — see RegistrationNoticeModal / handleAcknowledgeRegistration.
+      setShowRegistrationNotice(true);
+      return;
+    }
     setSubmitting(true);
     try {
-      if (mode === 'login') {
-        await login(email, password);
-      } else {
-        await register(email, password);
-      }
+      await login(email, password);
     } catch {
       // Error message is already surfaced via authStore's `error` state.
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleAcknowledgeRegistration() {
+    setSubmitting(true);
+    try {
+      await register(email, password);
+      setShowRegistrationNotice(false);
+    } catch {
+      // Error message is already surfaced via authStore's `error` state; keep the modal open
+      // (over the form) so the user can see it and retry without re-entering their details.
+      setShowRegistrationNotice(false);
     } finally {
       setSubmitting(false);
     }
@@ -64,6 +82,13 @@ function LoggedOutForm() {
         <span role="alert" className="top-banner__error">
           {error}
         </span>
+      )}
+      {showRegistrationNotice && (
+        <RegistrationNoticeModal
+          submitting={submitting}
+          onAcknowledge={handleAcknowledgeRegistration}
+          onCancel={() => setShowRegistrationNotice(false)}
+        />
       )}
     </form>
   );

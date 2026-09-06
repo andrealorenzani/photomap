@@ -28,6 +28,12 @@ features, and the same choice of two basemap styles (Detailed / Treasure Map —
 public `/share/{token}` route lets a link recipient view a read-only version of an account's map
 with no login and no upload/delete affordances.
 
+As of v1.0.0, registration is no longer self-service-to-upload: a new account can log in and use
+the app immediately, but **cannot upload until an admin activates it**. A secret `/admin` console
+(see "Admin console" below) is where that activation happens. This does not affect guest mode at
+all, and every account that existed before this change was automatically grandfathered to active
+status, so nobody already using the app lost access.
+
 ## Guest mode, as it works today
 
 - **Uploading photos**: pick a folder via a folder-picker control, or drag-and-drop a folder
@@ -42,13 +48,19 @@ with no login and no upload/delete affordances.
   timeline filter changes. Existing markers can be dragged to a new spot, and GPS-less photos
   can be dragged onto the map from a dedicated panel to give them a location for the first time
   (see "Filter/search and drag-to-reassign" below).
-- **Photos without GPS**: never discarded. They're counted in the status panel and remain
-  reachable and viewable through the timeline, just not shown as map markers (unless/until
-  dragged onto the map to assign them a location).
+- **Photos without GPS**: never discarded in guest mode. They're counted in the status panel
+  (labeled "Discarded (No GPS)" — a label shared with account mode's status panel, see "Account
+  mode" below for why the wording differs from guest-mode behavior) and remain reachable and
+  viewable through the timeline, just not shown as map markers (unless/until dragged onto the map
+  to assign them a location).
 - **Timeline**: a bottom strip spanning from the earliest to latest photo date (or the current
-  year if nothing is loaded), rendered as a density heatmap — darker/taller where more photos
-  exist for that period. Clicking a segment filters the map to that date range and opens a
-  thumbnail strip of the matching photos (including ones without GPS).
+  year if nothing is loaded). Its default view is unchanged: a density heatmap — darker/taller
+  where more photos exist for that period — and clicking a segment filters the map to that date
+  range and opens a thumbnail strip of the matching photos (including ones without GPS). As of
+  v1.0.0 the timeline also supports drilling down through a calendar axis: from the density view
+  you can navigate into a specific year, then a specific month, then a specific day, with
+  breadcrumbs and axis labels at each level; picking a day applies the same date-filter/thumbnail-
+  strip behavior as clicking a segment in the original density view.
 - **Viewing a photo**: clicking a thumbnail opens a full-size view with a semi-transparent
   overlay banner showing the photo's datetime. There is deliberately no reverse-geocoded place
   name and no raw latitude/longitude shown in guest mode — just the datetime (reverse geocoding
@@ -81,11 +93,30 @@ data lives and comes from.
 
 - **Registration and login**: email + password accounts, hashed server-side, a server-side
   session (not a token the frontend manages), and CSRF protection on every state-changing
-  request.
-- **Uploading photos to the server**: once logged in, the folder-picker/drag-and-drop upload flow
-  sends each photo (plus its client-parsed GPS/datetime/camera metadata) to the backend instead
-  of IndexedDB; the server independently validates and re-processes the image (resized to a max
-  2000px long edge, plus a thumbnail) rather than trusting the client's copy.
+  request. Submitting the registration form first shows a notice popup explaining: an admin must
+  approve the account before uploads work (the account can still log in and browse immediately);
+  photos are private by default — never publicly listed or searchable, shared only via a link the
+  account holder explicitly generates and can revoke; the account's own email doubles as the
+  address that receives activation/disable notifications (no separate notification-email field
+  exists); and Guest Mode uploads nothing, so photos taken while not logged in can't be shared
+  with anyone. Only explicitly acknowledging this popup creates the account. Registering also
+  sends a notification email to a configurable admin address, prompting review.
+- **Admin approval gate**: a newly-registered account is created in a `pending` state. A pending
+  account can log in, browse, and use every feature of the app **except uploading** — an upload
+  attempt is rejected until an admin activates the account from the `/admin` console (see "Admin
+  console" below), at which point the registered email receives an activation notice. An admin
+  can later disable an account entirely (blocking all authenticated actions, not just uploads),
+  which also sends the account's email a notice. Every account that existed before this policy was
+  introduced was automatically grandfathered to `active` status, so no pre-existing user was
+  locked out by the change.
+- **Uploading photos to the server**: once logged in and activated, the folder-picker/drag-and-drop
+  upload flow sends each photo (plus its client-parsed GPS/datetime/camera metadata) to the
+  backend instead of IndexedDB; the server independently validates and re-processes the image
+  (resized to a max 2000px long edge, plus a thumbnail) rather than trusting the client's copy.
+  As of v1.0.0, a photo with no usable GPS data is discarded outright by the server rather than
+  accepted as an ungeotagged photo — account-mode uploading requires GPS. This does not affect
+  guest mode, which never reaches this server-side check and continues to accept and retain
+  GPS-less photos as before.
 - **A persistent "stored on the server" notice**: visible for the entire duration of an
   authenticated session, from before the very first upload, distinct from and mutually exclusive
   with the guest-mode privacy note.
@@ -112,13 +143,46 @@ data lives and comes from.
 - **Reverse geocoding**: a server-side proxy to OpenStreetMap's Nominatim service exists
   (`GET /api/geocode`, cached, rate-limited), but is still not surfaced anywhere in the UI — the
   full-size photo view shows only a datetime in both modes. Left as a future enhancement.
-- **Storage quota**: each account is capped at 100 MB of actual stored photo/thumbnail bytes;
-  an upload past that limit is rejected with a distinct `413 quota_exceeded` error, surfaced to
-  the user rather than silently swallowed.
+- **Storage quota**: each account is capped at a storage quota of actual stored photo/thumbnail
+  bytes (100 MB by default); an upload past that limit is rejected with a distinct
+  `413 quota_exceeded` error, surfaced to the user rather than silently swallowed. As of v1.0.0
+  the quota is admin-configurable rather than a fixed constant: an admin sets the site-wide
+  default for newly-activated accounts and can override an individual account's quota when
+  activating it.
 - **No guest-to-account migration**: logging in does not upload your existing guest-mode
   IndexedDB photos, and logging out does not clear them — guest and account data are two
   separate namespaces with no migration between them in this version. This is a deliberate
   scope decision, not an oversight (see "Not yet built" below).
+
+## Admin console (`/admin`)
+
+New in v1.0.0: a secret, separate `/admin` page, unrelated to and never sharing state with any
+user account, protected by its own single operator username/password (not a `users` row —
+verified against a `password_hash()`-hashed credential stored in the backend's config, never a
+reversible/encrypted secret). It is unrelated to and never reachable from anywhere in the main
+app's navigation; only someone told the URL and given the credential can use it.
+
+From the admin console, the operator can:
+
+- **See a searchable, filterable, sortable list of every registered account** — search by email,
+  filter by status (pending/active/disabled), and sort by email or by registration date.
+- **Activate a pending account**, optionally setting that account's storage quota at the same
+  time (defaulting to the site-wide default quota if left unset). Activation emails the account.
+- **Disable an account** (with a confirmation step), immediately blocking every authenticated
+  action for it, not just uploads. Disabling emails the account.
+- **See whether an account has an active share link, and when it was created** — deliberately an
+  existence-and-timestamp indicator only. The admin console never displays, fetches, or has any
+  code path capable of revealing the actual shareable URL/token; showing the real link would hand
+  the admin de facto access to view that account's privately-shared photos, which this design
+  explicitly avoids.
+- **Manage site-wide settings**: the default storage quota applied to newly-activated accounts,
+  a global upload on/off kill-switch (independent of any individual account's status), and basic
+  usage stats (counts of accounts by status, total photos uploaded, total bytes stored).
+
+Leaving the admin credential unset in the backend configuration does not break anything else —
+every `/admin`-related API call cleanly reports the console as unconfigured, and every other part
+of the app (registration, login, uploads, sharing) is unaffected. Generating the credential
+requires a one-way hash, with a copy-pasteable command documented in `backend/README.md`.
 
 ## Basemap style: Detailed vs. Treasure Map
 
@@ -187,9 +251,10 @@ an account, unlike photo data itself.
 - **Guest-to-account photo migration** on login/logout — a deliberate scope decision for this
   version, not planned as a near-term addition unless prioritized.
 - Explicitly out of scope for this product at any phase: multi-user collaboration on one account,
-  photo editing, mobile native apps, payment/billing, an admin dashboard.
+  photo editing, mobile native apps, payment/billing.
 
 ## Open product questions
-None currently open. Whether the 100MB per-account storage quota is permanent product policy or
-a placeholder remains an open future product decision, outside the scope of any phase built so
-far, but does not block anything currently planned.
+None currently open. The per-account storage quota question (previously open: is a fixed 100MB
+cap permanent policy?) is resolved as of v1.0.0 — the quota is no longer a fixed constant at all;
+it's an admin-configurable site-wide default with an optional per-account override, so the
+"how much" decision now lives with whoever runs the deployment rather than in the codebase.

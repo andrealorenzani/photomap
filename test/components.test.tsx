@@ -131,7 +131,7 @@ describe('StatusPanel', () => {
     render(<StatusPanel />);
     expect(screen.getByText('Processed: 4')).toBeInTheDocument();
     expect(screen.getByText('With GPS: 3')).toBeInTheDocument();
-    expect(screen.getByText('Without GPS: 1')).toBeInTheDocument();
+    expect(screen.getByText('Discarded (No GPS): 1')).toBeInTheDocument();
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
   });
 
@@ -288,5 +288,81 @@ describe('TopBanner (real login/register, account-mode controls)', () => {
 
     await waitFor(() => expect(useAuthStore.getState().status).toBe('guest'));
     await waitFor(() => expect(screen.getByPlaceholderText('Email')).toBeInTheDocument());
+  });
+});
+
+describe('TopBanner registration notice (gates account creation on acknowledgment)', () => {
+  beforeEach(async () => {
+    await resetAuthAndRepoState();
+  });
+
+  afterEach(async () => {
+    cleanup();
+    vi.restoreAllMocks();
+    await resetAuthAndRepoState();
+  });
+
+  function switchToRegisterMode() {
+    fireEvent.click(screen.getByRole('button', { name: /need an account\? register/i }));
+  }
+
+  it('submitting the register form shows the notice and does not create the account yet', () => {
+    const fetchSpy = installFetchMock(() => {
+      throw new Error('fetch should never be called before the notice is acknowledged');
+    });
+
+    render(<TopBanner />);
+    switchToRegisterMode();
+    fireEvent.change(screen.getByPlaceholderText('Email'), { target: { value: 'new@example.com' } });
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: /^register$/i }));
+
+    expect(screen.getByRole('dialog', { name: /before you register/i })).toBeInTheDocument();
+    expect(screen.getByText(/admin approval is required/i)).toBeInTheDocument();
+    expect(screen.getByText(/private by default/i)).toBeInTheDocument();
+    expect(screen.getByText(/notification address/i)).toBeInTheDocument();
+    expect(screen.getByText(/guest mode uploads nothing/i)).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('acknowledging the notice actually registers the account', async () => {
+    installFetchMock((url, init) => {
+      if (url.endsWith('/api/csrf-token')) return jsonResponse({ csrfToken: 'tok' });
+      if (url.endsWith('/api/register') && init?.method === 'POST') {
+        return jsonResponse({ id: 1, email: 'new@example.com' });
+      }
+      if (url.endsWith('/api/login') && init?.method === 'POST') {
+        return jsonResponse({ id: 1, email: 'new@example.com' });
+      }
+      if (url.endsWith('/api/photos')) return jsonResponse({ photos: [] });
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    render(<TopBanner />);
+    switchToRegisterMode();
+    fireEvent.change(screen.getByPlaceholderText('Email'), { target: { value: 'new@example.com' } });
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: /^register$/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: /i understand, create my account/i }));
+
+    await waitFor(() => expect(screen.getByTestId('account-email')).toHaveTextContent('new@example.com'));
+    expect(screen.queryByRole('dialog', { name: /before you register/i })).not.toBeInTheDocument();
+  });
+
+  it('cancelling the notice closes it without ever registering', () => {
+    const fetchSpy = installFetchMock(() => {
+      throw new Error('fetch should never be called when the notice is cancelled');
+    });
+
+    render(<TopBanner />);
+    switchToRegisterMode();
+    fireEvent.change(screen.getByPlaceholderText('Email'), { target: { value: 'new@example.com' } });
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: /^register$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(screen.queryByRole('dialog', { name: /before you register/i })).not.toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

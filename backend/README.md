@@ -264,13 +264,13 @@ state-changing endpoint (including `/api/register` and `/api/login`) requires an
 | Method | Path | Auth | CSRF | Notes |
 |---|---|---|---|---|
 | GET | `/api/csrf-token` | no | no | Seeds/returns `{ csrfToken }` |
-| POST | `/api/register` | no | yes | `{ email, password }` -> `201 { id, email }` |
-| POST | `/api/login` | no | yes | Rate-limited; `200 { id, email }` |
+| POST | `/api/register` | no | yes | `{ email, password }` -> `201 { id, email, status: 'pending' }`. New accounts require admin approval before they can upload — see "Admin console" below. |
+| POST | `/api/login` | no | yes | Rate-limited; `200 { id, email, status }`. Pending accounts can still log in; only uploading is blocked. |
 | POST | `/api/logout` | yes | yes | `200 { ok: true }` |
-| GET | `/api/me` | yes | no | `200 { id, email }` or `401` |
+| GET | `/api/me` | yes | no | `200 { id, email, status }` or `401`/`403 account_disabled` |
 | DELETE | `/api/account` | yes | yes | Deletes account + photos + share links |
 | GET | `/api/photos` | yes | no | `200 { photos: [...] }` |
-| POST | `/api/photos` | yes | yes | Multipart: `photo` file + optional `lat`/`lon`/`takenAt`/`cameraMake`/`cameraModel` |
+| POST | `/api/photos` | yes | yes | Multipart: `photo` file + required `lat`/`lon` (an account-mode upload with no usable GPS is rejected with `422 gps_required`) + optional `takenAt`/`cameraMake`/`cameraModel`. `403 account_pending`/`403 account_disabled` if the account isn't active; `503 uploads_disabled` if the admin has globally disabled uploads. |
 | DELETE | `/api/photos/{id}` | yes | yes | Owner-only (404 if not owner) |
 | PATCH | `/api/photos/{id}` | yes | yes | `{ lat, lon }` -> updated photo JSON; owner-only (404 if not owner); allowed for any photo, not just currently-GPS-less ones |
 | POST | `/api/share-links` | yes | yes | Rotates: revokes any existing active link, creates a new one |
@@ -279,6 +279,46 @@ state-changing endpoint (including `/api/register` and `/api/login`) requires an
 | GET | `/api/photos/{id}/file` | signed URL | no | Full-size image bytes |
 | GET | `/api/photos/{id}/thumbnail` | signed URL | no | Thumbnail image bytes |
 | GET | `/api/geocode?lat=&lon=` | yes | no | Reverse-geocode via Nominatim, cached |
+| POST | `/api/admin/login` | no | yes | `{ username, password }` -> `200 { username }`. `503 admin_not_configured` if `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` aren't set. |
+| POST | `/api/admin/logout` | admin | yes | `200 { ok: true }` |
+| GET | `/api/admin/me` | admin | no | `200 { username }` or `401` |
+| GET | `/api/admin/users?q=&status=&sort=&dir=&page=&perPage=` | admin | no | Search/filter/sort user list. Never returns a raw share-link token/URL — only `hasShareLink`/`shareLinkCreatedAt`. |
+| POST | `/api/admin/users/{id}/activate` | admin | yes | `{ storageQuotaBytes? }` -> approves the account, optionally sets a per-user quota, emails the user |
+| POST | `/api/admin/users/{id}/disable` | admin | yes | Fully suspends the account (not just uploads), emails the user |
+| GET/PATCH | `/api/admin/settings` | admin | PATCH only | `{ defaultStorageQuotaBytes, uploadsEnabled }` — the default quota for new users and a global upload kill-switch |
+| GET | `/api/admin/stats` | admin | no | User counts by status, total photo count, total bytes stored |
+
+**Admin console (`/admin` in the frontend).** A single hardcoded admin username/password pair
+(no multi-admin support in this release), stored as a bcrypt hash — never a reversible
+"encryption" — via PHP's own `password_hash()`/`password_verify()`, exactly the primitive
+already used for regular user accounts. The admin identity is a separate session flag
+(`$_SESSION['admin']`), never backed by a `users` row, and can never coexist in the same
+session as a logged-in user (logging into one identity clears the other). Calling `/admin`
+"secret" would be misleading — it's a normal SPA route shipped in the same public JS bundle as
+everything else; the only real protection is this backend credential check, not URL obscurity.
+
+To set up the admin account:
+
+1. Pick a unique `ADMIN_USERNAME` (not `admin`).
+2. Pick a strong password; don't write the plaintext into any config file.
+3. Generate the hash: `php -r 'echo password_hash("your-chosen-password", PASSWORD_DEFAULT), PHP_EOL;'`
+4. Copy the printed `$2y$...` string into `.env`/`config.php` as `ADMIN_PASSWORD_HASH`.
+5. Discard the plaintext — it cannot be recovered from the hash. Repeat with a new password to rotate it later.
+
+Leaving `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` unset does not break anything else: every other
+route (registration, login, uploads, sharing) works normally, and only `/api/admin/*` routes
+return `503 admin_not_configured`. `ADMIN_NOTIFY_EMAIL` controls where "new registration"
+notification emails go; if unset, that notification silently degrades to a logged no-op.
+Outgoing mail (registration notice to the admin, activation/deactivation notices to the user)
+is sent via PHP's built-in `mail()` (configurable `MAIL_FROM_ADDRESS`/`MAIL_FROM_NAME`), not an
+SMTP library — chosen because shared hosts like Dreamhost reliably support `mail()` with zero
+extra configuration, while outbound SMTP is often blocked there. Mail failures are logged via
+`error_log()` and never block the action that triggered them.
+
+Per-account storage quota is no longer a single flat `STORAGE_QUOTA_BYTES` env var — it's
+admin-configurable at runtime from the Settings panel (`GET`/`PATCH /api/admin/settings`):
+each user optionally has their own `storageQuotaBytes` override, falling back to the
+admin-configured global default (seeded at 100MB) when they don't have one.
 
 `thumbnailUrl`/`previewUrl` in photo JSON are short-lived, HMAC-signed URLs (15 min for the
 owner context, 10 min for the share context) that are freshly regenerated on every
@@ -331,7 +371,13 @@ curl -s -c "$JAR" -b "$JAR" -X POST "$BASE/api/login" \
   -d '{"email":"smoke@example.com","password":"password123"}'
 CSRF=$(curl -s -c "$JAR" -b "$JAR" "$BASE/api/csrf-token" | jq -r .csrfToken)
 
-# 4. Upload a photo with metadata.
+# 3b. New accounts start "pending" and cannot upload yet (403 account_pending) until an
+#     admin activates them — see "Admin console" above. For a local dev server without a
+#     real admin flow handy, the quickest path is a direct SQL UPDATE:
+#     UPDATE users SET status='active' WHERE email='smoke@example.com';
+
+# 4. Upload a photo with metadata (requires lat/lon in account mode -- a GPS-less upload is
+#    rejected with 422 gps_required, mirroring the client-side discard in account mode).
 PHOTO=$(curl -s -c "$JAR" -b "$JAR" -X POST "$BASE/api/photos" \
   -H "X-CSRF-Token: $CSRF" \
   -F "photo=@/path/to/some.jpg" -F "lat=45.46" -F "lon=9.19")

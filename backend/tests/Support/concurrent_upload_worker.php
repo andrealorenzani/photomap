@@ -15,8 +15,10 @@ require_once __DIR__ . '/../../vendor/autoload.php';
 
 use Photomap\Backend\Config;
 use Photomap\Backend\Database;
+use Photomap\Backend\Repositories\AppSettingsRepository;
 use Photomap\Backend\Repositories\PhotoRepository;
 use Photomap\Backend\Repositories\UserRepository;
+use Photomap\Backend\Services\AppSettingsService;
 use Photomap\Backend\Services\StorageQuotaService;
 
 Config::load(dirname(__DIR__, 2), '.env.test');
@@ -26,7 +28,11 @@ Config::load(dirname(__DIR__, 2), '.env.test');
 $pdo = Database::connect();
 $users = new UserRepository($pdo);
 $photos = new PhotoRepository($pdo);
-$quota = new StorageQuotaService($pdo, $users, $photos, (int) $quotaBytes);
+// Per-user quota override, rather than the retired global STORAGE_QUOTA_BYTES constant, so
+// the appSettings default below is irrelevant to this test.
+$users->activate((int) $userId, (int) $quotaBytes);
+$appSettings = new AppSettingsService(new AppSettingsRepository($pdo));
+$quota = new StorageQuotaService($pdo, $users, $photos, $appSettings);
 
 $result = $quota->reserveAndInsert((int) $userId, (int) $newBytes, function () use ($photos, $userId, $newBytes, $sleepMicroseconds) {
     usleep((int) $sleepMicroseconds);

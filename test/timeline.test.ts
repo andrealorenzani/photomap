@@ -4,9 +4,13 @@ import {
   binIndexForOffset,
   binIntensity,
   computeBins,
+  computeDayBins,
   computeDomain,
+  computeMonthBins,
+  computeYearBins,
   photosInRange,
   photosWithUnknownDate,
+  yearsPresent,
 } from '../src/lib/timeline';
 import type { PhotoRecord } from '../src/types';
 
@@ -150,5 +154,71 @@ describe('photosWithUnknownDate / photosInRange', () => {
     ];
     const inRange = photosInRange(photos, new Date('2020-01-01'), new Date('2020-12-31'));
     expect(inRange.map((p) => p.id).sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('calendar-axis navigation (year/month/day drill-down, layered on the density heatmap)', () => {
+  describe('yearsPresent', () => {
+    it('falls back to the current year when there are no dated photos', () => {
+      const now = new Date(2026, 0, 1);
+      expect(yearsPresent([], now)).toEqual([2026]);
+      expect(yearsPresent([photo('a', undefined)], now)).toEqual([2026]);
+    });
+
+    it('returns sorted, unique years across photos', () => {
+      const photos = [
+        photo('a', '2022-03-01T00:00:00.000Z'),
+        photo('b', '2020-01-01T00:00:00.000Z'),
+        photo('c', '2022-11-01T00:00:00.000Z'),
+      ];
+      expect(yearsPresent(photos)).toEqual([2020, 2022]);
+    });
+  });
+
+  describe('computeYearBins', () => {
+    it('buckets photos into the correct calendar year, labeled by year', () => {
+      // Times deliberately kept well away from a year boundary (noon, not midnight) so this
+      // assertion holds regardless of the test runner's local timezone offset.
+      const photos = [
+        photo('a', '2020-06-01T12:00:00.000Z'),
+        photo('b', '2021-06-01T12:00:00.000Z'),
+        photo('c', '2020-08-15T12:00:00.000Z'),
+      ];
+      const bins = computeYearBins(photos, [2020, 2021]);
+      expect(bins.map((b) => b.label)).toEqual(['2020', '2021']);
+      expect(bins[0].count).toBe(2);
+      expect(bins[1].count).toBe(1);
+    });
+  });
+
+  describe('computeMonthBins', () => {
+    it('produces 12 month bins labeled Jan..Dec for the given year only', () => {
+      const photos = [
+        photo('a', '2020-03-15T12:00:00.000Z'),
+        photo('b', '2021-03-15T12:00:00.000Z'), // different year: must not be counted
+      ];
+      const bins = computeMonthBins(photos, 2020);
+      expect(bins).toHaveLength(12);
+      expect(bins[0].label).toBe('Jan');
+      expect(bins[2].label).toBe('Mar');
+      expect(bins[2].count).toBe(1);
+      expect(bins.reduce((sum, b) => sum + b.count, 0)).toBe(1);
+    });
+  });
+
+  describe('computeDayBins', () => {
+    it('produces one bin per day in the given month, honoring month length', () => {
+      const bins = computeDayBins([], 2024, 1); // February 2024 (leap year: 29 days)
+      expect(bins).toHaveLength(29);
+      expect(bins[0].label).toBe('1');
+      expect(bins[28].label).toBe('29');
+    });
+
+    it('counts photos into the correct day bin', () => {
+      const photos = [photo('a', '2024-02-15T12:00:00.000Z')];
+      const bins = computeDayBins(photos, 2024, 1);
+      expect(bins[14].count).toBe(1);
+      expect(bins.reduce((sum, b) => sum + b.count, 0)).toBe(1);
+    });
   });
 });

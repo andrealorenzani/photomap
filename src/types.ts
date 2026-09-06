@@ -60,6 +60,13 @@ export interface IngestStatus {
   storageWarning?: string;
   /** Count of non-quota persistence failures (network error, 413/422, etc. in account mode). */
   uploadFailures: number;
+  /**
+   * Set when an account-mode upload was discarded specifically because it had no GPS data
+   * (backend `422 gps_required`) — surfaced as a distinct message rather than lumped into the
+   * generic `storageWarning`/`uploadFailures` path, since it's an expected, actionable outcome
+   * (add GPS data, or use guest mode) rather than a generic failure.
+   */
+  gpsRequiredNotice?: string;
 }
 
 /** Parsed EXIF-derived metadata produced by the worker for a single file. */

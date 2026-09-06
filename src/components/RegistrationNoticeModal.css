@@ -1,0 +1,40 @@
+.registration-notice {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.registration-notice__box {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.5rem;
+  max-width: 480px;
+  width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
+  color: #1f2933;
+}
+
+.registration-notice__title {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
+.registration-notice__list {
+  margin: 0 0 1rem;
+  padding-left: 1.2rem;
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.registration-notice__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}

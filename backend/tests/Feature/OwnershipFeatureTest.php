@@ -16,7 +16,7 @@ final class OwnershipFeatureTest extends FeatureTestCase
     public function testUserCannotDeleteAnotherUsersPhoto(): void
     {
         [$userAId, , $csrfA] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrfA]);
+        $upload = $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrfA]);
         $photoId = $upload->json()['id'];
 
         $row = $this->pdo->query("SELECT storage_path, thumbnail_path FROM photos WHERE id = {$photoId}")->fetch();
@@ -59,10 +59,10 @@ final class OwnershipFeatureTest extends FeatureTestCase
     public function testGetPhotosNeverReturnsAnotherUsersRows(): void
     {
         [$userAId, , $csrfA] = $this->registerAndLogin();
-        $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrfA]);
+        $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrfA]);
 
         [$userBId, , $csrfB] = $this->registerAndLogin();
-        $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('tiny-100x100.jpg')], ['X-CSRF-Token: ' . $csrfB]);
+        $this->http->postMultipart('/api/photos', ['lat' => '3.0', 'lon' => '4.0'], ['photo' => $this->fixturePath('tiny-100x100.jpg')], ['X-CSRF-Token: ' . $csrfB]);
 
         $list = $this->http->get('/api/photos');
         $this->assertCount(1, $list->json()['photos']);
@@ -71,17 +71,18 @@ final class OwnershipFeatureTest extends FeatureTestCase
     public function testDeleteAccountOnlyAffectsThatUsersData(): void
     {
         [$userAId, $emailA, $csrfA] = $this->registerAndLogin();
-        $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrfA]);
+        $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrfA]);
 
         $httpB = new HttpClient(static::$server->baseUrl);
         $csrfTokenB = json_decode($httpB->get('/api/csrf-token')->body, true)['csrfToken'];
         $emailB = 'survivor' . bin2hex(random_bytes(4)) . '@example.com';
         $registerB = $httpB->postJson('/api/register', ['email' => $emailB, 'password' => 'password123'], ['X-CSRF-Token: ' . $csrfTokenB]);
         $userBId = json_decode($registerB->body, true)['id'];
+        $this->activateUser((int) $userBId);
         $csrfTokenB2 = json_decode($httpB->get('/api/csrf-token')->body, true)['csrfToken'];
         $httpB->postJson('/api/login', ['email' => $emailB, 'password' => 'password123'], ['X-CSRF-Token: ' . $csrfTokenB2]);
         $csrfTokenB3 = json_decode($httpB->get('/api/csrf-token')->body, true)['csrfToken'];
-        $httpB->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('tiny-100x100.jpg')], ['X-CSRF-Token: ' . $csrfTokenB3]);
+        $httpB->postMultipart('/api/photos', ['lat' => '3.0', 'lon' => '4.0'], ['photo' => $this->fixturePath('tiny-100x100.jpg')], ['X-CSRF-Token: ' . $csrfTokenB3]);
 
         $deleteAccount = $this->http->delete('/api/account', ['X-CSRF-Token: ' . $csrfA]);
         $this->assertSame(200, $deleteAccount->status);

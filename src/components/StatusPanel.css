@@ -39,3 +39,12 @@
   border-radius: 4px;
   padding: 0.35rem 0.5rem;
 }
+
+.status-panel__gps-required {
+  margin-top: 0.5rem;
+  color: #6b4b00;
+  background: #fff4e0;
+  border: 1px solid #f0d38a;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+}

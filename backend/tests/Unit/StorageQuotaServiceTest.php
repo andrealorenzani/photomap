@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Photomap\Backend\Tests\Unit;
 
+use Photomap\Backend\Repositories\AppSettingsRepository;
 use Photomap\Backend\Repositories\PhotoRepository;
 use Photomap\Backend\Repositories\UserRepository;
+use Photomap\Backend\Services\AppSettingsService;
 use Photomap\Backend\Services\StorageQuotaService;
 use Photomap\Backend\Tests\Support\DatabaseTestCase;
 
@@ -19,12 +21,27 @@ final class StorageQuotaServiceTest extends DatabaseTestCase
         return (int) $this->pdo->lastInsertId();
     }
 
+    private function appSettings(): AppSettingsService
+    {
+        return new AppSettingsService(new AppSettingsRepository($this->pdo));
+    }
+
+    /**
+     * Sets a per-user quota override (nullable-fallback-to-global-default is covered by
+     * testUploadUsesGlobalDefaultWhenUserHasNoOverride() below).
+     */
+    private function setUserQuota(UserRepository $users, int $userId, int $quotaBytes): void
+    {
+        $users->activate($userId, $quotaBytes);
+    }
+
     public function testUploadUnderQuotaSucceeds(): void
     {
         $userId = $this->createUser();
         $users = new UserRepository($this->pdo);
         $photos = new PhotoRepository($this->pdo);
-        $quota = new StorageQuotaService($this->pdo, $users, $photos, 1_000_000);
+        $this->setUserQuota($users, $userId, 1_000_000);
+        $quota = new StorageQuotaService($this->pdo, $users, $photos, $this->appSettings());
 
         $result = $quota->reserveAndInsert($userId, 100, function () use ($photos, $userId) {
             return $photos->create($userId, 'photos/x.jpg', 'thumbnails/x.jpg', 100, null, null, null, null, null);
@@ -39,7 +56,8 @@ final class StorageQuotaServiceTest extends DatabaseTestCase
         $userId = $this->createUser();
         $users = new UserRepository($this->pdo);
         $photos = new PhotoRepository($this->pdo);
-        $quota = new StorageQuotaService($this->pdo, $users, $photos, 1000);
+        $this->setUserQuota($users, $userId, 1000);
+        $quota = new StorageQuotaService($this->pdo, $users, $photos, $this->appSettings());
 
         $photos->create($userId, 'photos/a.jpg', 'thumbnails/a.jpg', 900, null, null, null, null, null);
 
@@ -72,7 +90,8 @@ final class StorageQuotaServiceTest extends DatabaseTestCase
         $userId = $this->createUser();
         $users = new UserRepository($this->pdo);
         $photos = new PhotoRepository($this->pdo);
-        $quota = new StorageQuotaService($this->pdo, $users, $photos, 1000);
+        $this->setUserQuota($users, $userId, 1000);
+        $quota = new StorageQuotaService($this->pdo, $users, $photos, $this->appSettings());
 
         $id = $photos->create($userId, 'photos/a.jpg', 'thumbnails/a.jpg', 900, null, null, null, null, null);
 
@@ -83,6 +102,39 @@ final class StorageQuotaServiceTest extends DatabaseTestCase
 
         $allowed = $quota->reserveAndInsert($userId, 200, fn () => $photos->create($userId, 'photos/c.jpg', 'thumbnails/c.jpg', 200, null, null, null, null, null));
         $this->assertTrue($allowed['ok']);
+    }
+
+    public function testUploadUsesGlobalDefaultWhenUserHasNoOverride(): void
+    {
+        $userId = $this->createUser();
+        $users = new UserRepository($this->pdo);
+        $photos = new PhotoRepository($this->pdo);
+        $appSettings = $this->appSettings();
+        $appSettings->updateSettings(500, null);
+        $quota = new StorageQuotaService($this->pdo, $users, $photos, $appSettings);
+
+        // No per-user override was set — falls back to the just-lowered global default (500).
+        $blocked = $quota->reserveAndInsert($userId, 600, fn () => $photos->create($userId, 'photos/a.jpg', 'thumbnails/a.jpg', 600, null, null, null, null, null));
+        $this->assertFalse($blocked['ok']);
+        $this->assertSame(500, $blocked['quotaBytes']);
+
+        $allowed = $quota->reserveAndInsert($userId, 400, fn () => $photos->create($userId, 'photos/b.jpg', 'thumbnails/b.jpg', 400, null, null, null, null, null));
+        $this->assertTrue($allowed['ok']);
+    }
+
+    public function testPerUserOverrideTakesPrecedenceOverGlobalDefault(): void
+    {
+        $userId = $this->createUser();
+        $users = new UserRepository($this->pdo);
+        $photos = new PhotoRepository($this->pdo);
+        $appSettings = $this->appSettings();
+        $appSettings->updateSettings(100, null); // Tiny global default.
+        $this->setUserQuota($users, $userId, 10_000); // But this user has a generous override.
+        $quota = new StorageQuotaService($this->pdo, $users, $photos, $appSettings);
+
+        $result = $quota->reserveAndInsert($userId, 5000, fn () => $photos->create($userId, 'photos/a.jpg', 'thumbnails/a.jpg', 5000, null, null, null, null, null));
+        $this->assertTrue($result['ok']);
+        $this->assertSame(10_000, $result['quotaBytes']);
     }
 
     /**

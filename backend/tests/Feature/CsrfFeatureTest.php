@@ -49,7 +49,7 @@ final class CsrfFeatureTest extends FeatureTestCase
         $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')]);
         $this->assertSame(403, $upload->status);
 
-        $uploadOk = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
+        $uploadOk = $this->http->postMultipart('/api/photos', ['lat' => '1.0', 'lon' => '2.0'], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
         $this->assertSame(201, $uploadOk->status);
         $photoId = $uploadOk->json()['id'];
 

@@ -14,10 +14,15 @@ final class PhotoUpdateFeatureTest extends FeatureTestCase
 
     public function testUpdateLocationSucceedsAndReflectsInResponseAndSubsequentList(): void
     {
-        [, , $csrf] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
-        $id = $upload->json()['id'];
-        $this->assertNull($upload->json()['lat']);
+        // As of the account-mode GPS-required release, a genuinely GPS-less row can no longer
+        // be created via the upload API (see GpsRequiredFeatureTest) — this row is inserted
+        // directly to simulate one that pre-dates that change, exactly the case the PATCH
+        // (assign-a-location-later) workflow must keep supporting.
+        [$userId, , $csrf] = $this->registerAndLogin();
+        $id = $this->insertGpsLessPhotoForUser($userId);
+
+        $beforeList = $this->http->get('/api/photos');
+        $this->assertNull($beforeList->json()['photos'][0]['lat']);
 
         $update = $this->http->patchJson('/api/photos/' . $id, ['lat' => 45.1234, 'lon' => 9.5678], ['X-CSRF-Token: ' . $csrf]);
         $this->assertSame(200, $update->status, $update->body);
@@ -73,9 +78,8 @@ final class PhotoUpdateFeatureTest extends FeatureTestCase
 
     public function testUnauthenticatedIs401(): void
     {
-        [, , $csrf] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
-        $id = $upload->json()['id'];
+        [$userId, , $csrf] = $this->registerAndLogin();
+        $id = $this->insertGpsLessPhotoForUser($userId);
 
         $this->http->resetCookies();
         $response = $this->http->patchJson('/api/photos/' . $id, ['lat' => 1, 'lon' => 2]);
@@ -84,9 +88,8 @@ final class PhotoUpdateFeatureTest extends FeatureTestCase
 
     public function testMissingOrInvalidCsrfIs403(): void
     {
-        [, , $csrf] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
-        $id = $upload->json()['id'];
+        [$userId, , $csrf] = $this->registerAndLogin();
+        $id = $this->insertGpsLessPhotoForUser($userId);
 
         $missing = $this->http->patchJson('/api/photos/' . $id, ['lat' => 1, 'lon' => 2]);
         $this->assertSame(403, $missing->status);
@@ -97,14 +100,15 @@ final class PhotoUpdateFeatureTest extends FeatureTestCase
 
     public function testCrossAccountOwnershipIs404NotForbidden(): void
     {
-        [, , $csrfA] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrfA]);
-        $id = $upload->json()['id'];
+        [$userAId, , $csrfA] = $this->registerAndLogin();
+        $id = $this->insertGpsLessPhotoForUser($userAId);
 
         $httpB = new HttpClient(static::$server->baseUrl);
         $csrfTokenB = json_decode($httpB->get('/api/csrf-token')->body, true)['csrfToken'];
         $emailB = 'userB' . bin2hex(random_bytes(4)) . '@example.com';
-        $httpB->postJson('/api/register', ['email' => $emailB, 'password' => 'password123'], ['X-CSRF-Token: ' . $csrfTokenB]);
+        $registerB = $httpB->postJson('/api/register', ['email' => $emailB, 'password' => 'password123'], ['X-CSRF-Token: ' . $csrfTokenB]);
+        $userBId = (int) json_decode($registerB->body, true)['id'];
+        $this->activateUser($userBId);
         $csrfTokenB2 = json_decode($httpB->get('/api/csrf-token')->body, true)['csrfToken'];
         $httpB->postJson('/api/login', ['email' => $emailB, 'password' => 'password123'], ['X-CSRF-Token: ' . $csrfTokenB2]);
         $csrfTokenB3 = json_decode($httpB->get('/api/csrf-token')->body, true)['csrfToken'];
@@ -126,9 +130,8 @@ final class PhotoUpdateFeatureTest extends FeatureTestCase
 
     public function testMissingCoordinatesIs422(): void
     {
-        [, , $csrf] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
-        $id = $upload->json()['id'];
+        [$userId, , $csrf] = $this->registerAndLogin();
+        $id = $this->insertGpsLessPhotoForUser($userId);
 
         $missingLon = $this->http->patchJson('/api/photos/' . $id, ['lat' => 1], ['X-CSRF-Token: ' . $csrf]);
         $this->assertSame(422, $missingLon->status);
@@ -140,9 +143,8 @@ final class PhotoUpdateFeatureTest extends FeatureTestCase
 
     public function testNonNumericCoordinatesIs422(): void
     {
-        [, , $csrf] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
-        $id = $upload->json()['id'];
+        [$userId, , $csrf] = $this->registerAndLogin();
+        $id = $this->insertGpsLessPhotoForUser($userId);
 
         $response = $this->http->patchJson('/api/photos/' . $id, ['lat' => 'not-a-number', 'lon' => 2], ['X-CSRF-Token: ' . $csrf]);
         $this->assertSame(422, $response->status);
@@ -151,9 +153,8 @@ final class PhotoUpdateFeatureTest extends FeatureTestCase
 
     public function testOutOfRangeCoordinatesIs422(): void
     {
-        [, , $csrf] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
-        $id = $upload->json()['id'];
+        [$userId, , $csrf] = $this->registerAndLogin();
+        $id = $this->insertGpsLessPhotoForUser($userId);
 
         $response = $this->http->patchJson('/api/photos/' . $id, ['lat' => 200, 'lon' => 2], ['X-CSRF-Token: ' . $csrf]);
         $this->assertSame(422, $response->status);
@@ -163,8 +164,7 @@ final class PhotoUpdateFeatureTest extends FeatureTestCase
     public function testExtraUnexpectedBodyFieldsAreIgnoredNoMassAssignment(): void
     {
         [$userId, , $csrf] = $this->registerAndLogin();
-        $upload = $this->http->postMultipart('/api/photos', [], ['photo' => $this->fixturePath('small-800x600.jpg')], ['X-CSRF-Token: ' . $csrf]);
-        $id = $upload->json()['id'];
+        $id = $this->insertGpsLessPhotoForUser($userId);
 
         $update = $this->http->patchJson(
             '/api/photos/' . $id,

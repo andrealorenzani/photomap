@@ -1,0 +1,52 @@
+.admin-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 480px;
+}
+
+.admin-settings__section h2 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.admin-settings__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.admin-settings__field input {
+  padding: 0.35rem;
+  width: 160px;
+}
+
+.admin-settings__checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.admin-settings__save-status {
+  margin-left: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.admin-settings__updated-at {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.admin-settings__stats {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}

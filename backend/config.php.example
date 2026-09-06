@@ -44,11 +44,13 @@ return [
     // /home/youruser/photomap-backend/storage -- never under /home/youruser/yourdomain.com/.
     'STORAGE_PATH' => '/home/youruser/photomap-backend/storage',
 
-    // --- Uploads / quota ---
-    // 100 MB/account default quota -- sanity-check this against your Dreamhost plan's disk quota
-    // if you expect many accounts.
+    // --- Uploads ---
     'MAX_UPLOAD_BYTES' => '26214400',
-    'STORAGE_QUOTA_BYTES' => '104857600',
+    // Per-account storage quota is no longer set here -- it's admin-configurable at runtime
+    // (default quota for new users + a global upload kill-switch) from the /admin console's
+    // Settings panel, backed by the `app_settings` table. The 0008 migration seeds a 100MB
+    // default; sanity-check that against your Dreamhost plan's disk quota if you expect many
+    // accounts, and change it from the admin UI, not here.
 
     // --- Nominatim (must include real contact info per Nominatim's usage policy) ---
     'NOMINATIM_USER_AGENT' => 'Photomap/1.0 (contact: you@example.com)',
@@ -70,4 +72,28 @@ return [
     // on two different domains), which the Dreamhost deploy path in the README does not need.
     'CORS_ALLOWED_ORIGINS' => '',
     'SESSION_COOKIE_SAMESITE' => 'Lax',
+
+    // --- Admin console (/admin) ---
+    // A single hardcoded admin username/password pair for v1.0.0 (no multi-admin support this
+    // release). Pick a unique username (not "admin"). Generate the password hash by running,
+    // on any machine with the PHP CLI (including over SSH on Dreamhost itself):
+    //   php -r 'echo password_hash("your-chosen-password", PASSWORD_DEFAULT), PHP_EOL;'
+    // Paste the printed $2y$... bcrypt hash below and discard the plaintext password -- it
+    // cannot be recovered from the hash. To rotate the password later, repeat this with a new
+    // password. Leaving these two blank does NOT break the rest of the app: every
+    // /api/admin/* route cleanly returns 503 admin_not_configured instead, and every other
+    // route (registration, login, uploads, sharing) is entirely unaffected.
+    'ADMIN_USERNAME' => '',
+    'ADMIN_PASSWORD_HASH' => '',
+    // Where "new registration" notification emails are sent. If left blank, that notification
+    // silently degrades to a logged no-op -- registration itself is never blocked by a
+    // missing/incomplete mail configuration.
+    'ADMIN_NOTIFY_EMAIL' => '',
+
+    // --- Mail (activation/deactivation/new-registration notifications) ---
+    // Sent via PHP's built-in mail(), which Dreamhost supports with zero extra configuration
+    // (unlike outbound SMTP, which is commonly blocked on shared hosting) -- best-effort only,
+    // failures are logged via error_log() and never block the triggering user-facing action.
+    'MAIL_FROM_ADDRESS' => 'no-reply@yourdomain.com',
+    'MAIL_FROM_NAME' => 'Photomap',
 ];

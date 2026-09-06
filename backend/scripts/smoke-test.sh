@@ -3,8 +3,13 @@
 # End-to-end manual smoke test for the Photomap backend, driven entirely over HTTP via curl
 # (no PHP internals touched). Requires `curl`, `jq`, and `file`.
 #
-# Usage: bash scripts/smoke-test.sh <base-url> [path-to-a-real-jpeg]
-#   e.g.: bash scripts/smoke-test.sh http://localhost:8000 tests/fixtures/small-800x600.jpg
+# Usage: bash scripts/smoke-test.sh <base-url> [path-to-a-real-jpeg] [admin-username] [admin-password]
+#   e.g.: bash scripts/smoke-test.sh http://localhost:8000 tests/fixtures/small-800x600.jpg myadmin s3cret
+#
+# The admin-username/admin-password arguments are optional: if omitted, the script tries to
+# read ADMIN_USERNAME from a sibling .env/.env.test (it cannot recover the plaintext admin
+# password from ADMIN_PASSWORD_HASH, so the admin-activation flow is skipped with a note
+# printed instead of failing the whole run).
 #
 # Exits non-zero on the first unexpected response.
 
@@ -12,9 +17,12 @@ set -euo pipefail
 
 BASE="${1:-http://localhost:8000}"
 PHOTO_PATH="${2:-tests/fixtures/small-800x600.jpg}"
+ADMIN_USERNAME_ARG="${3:-}"
+ADMIN_PASSWORD_ARG="${4:-}"
 EMAIL="smoke+$(date +%s)@example.com"
 PASSWORD="password123"
 JAR="$(mktemp)"
+ADMIN_JAR="$(mktemp)"
 
 pass() { echo "  OK: $1"; }
 fail() { echo "  FAIL: $1" >&2; exit 1; }
@@ -46,9 +54,53 @@ LOGIN_STATUS=$(curl -s -o /tmp/smoke-login.json -w '%{http_code}' -c "$JAR" -b "
   -X POST "$BASE/api/login" -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF" \
   -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}")
 expect_status 200 "$LOGIN_STATUS" "login"
+NEW_USER_ID=$(jq -r .id /tmp/smoke-login.json)
+[ "$(jq -r .status /tmp/smoke-login.json)" = "pending" ] || fail "expected freshly-registered account status=pending"
+pass "new account is pending, as expected"
 CSRF=$(curl -s -c "$JAR" -b "$JAR" "$BASE/api/csrf-token" | jq -r .csrfToken)
 
-echo "[4] POST /api/photos (upload with metadata)"
+echo "[4a] POST /api/photos while pending (must be blocked)"
+BLOCKED_UPLOAD_STATUS=$(curl -s -o /tmp/smoke-photo-blocked.json -w '%{http_code}' -c "$JAR" -b "$JAR" \
+  -X POST "$BASE/api/photos" -H "X-CSRF-Token: $CSRF" \
+  -F "photo=@${PHOTO_PATH}" -F "lat=45.4642" -F "lon=9.1900" -F "cameraMake=Smoke")
+expect_status 403 "$BLOCKED_UPLOAD_STATUS" "upload blocked while pending"
+[ "$(jq -r .error /tmp/smoke-photo-blocked.json)" = "account_pending" ] || fail "expected error=account_pending"
+pass "upload correctly blocked for a pending account"
+
+ADMIN_USERNAME="$ADMIN_USERNAME_ARG"
+ADMIN_PASSWORD="$ADMIN_PASSWORD_ARG"
+if [ -z "$ADMIN_USERNAME" ] && [ -f .env ]; then
+  ADMIN_USERNAME=$(grep -E '^ADMIN_USERNAME=' .env | head -1 | cut -d= -f2- || true)
+fi
+
+echo "[4b] Admin activates the new account"
+if [ -z "$ADMIN_USERNAME" ] || [ -z "$ADMIN_PASSWORD" ]; then
+  echo "  SKIPPED: no admin username/plaintext-password available to this script (the hash in"
+  echo "  config.php/.env cannot be reversed) -- activating the pending account directly via SQL"
+  echo "  instead so the rest of this smoke test can still exercise the post-activation flow."
+  echo "  Pass an admin username/password as args 3/4 to exercise the real /api/admin/* flow."
+  php -r '
+    require "vendor/autoload.php";
+    Photomap\Backend\Config::load(getcwd());
+    $pdo = Photomap\Backend\Database::connect();
+    $stmt = $pdo->prepare("UPDATE users SET status=?, approved_at=NOW() WHERE id=?");
+    $stmt->execute(["active", (int) $argv[1]]);
+  ' "$NEW_USER_ID"
+else
+  ADMIN_CSRF=$(curl -s -c "$ADMIN_JAR" -b "$ADMIN_JAR" "$BASE/api/csrf-token" | jq -r .csrfToken)
+  ADMIN_LOGIN_STATUS=$(curl -s -o /tmp/smoke-admin-login.json -w '%{http_code}' -c "$ADMIN_JAR" -b "$ADMIN_JAR" \
+    -X POST "$BASE/api/admin/login" -H 'Content-Type: application/json' -H "X-CSRF-Token: $ADMIN_CSRF" \
+    -d "{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}")
+  expect_status 200 "$ADMIN_LOGIN_STATUS" "admin login"
+  ADMIN_CSRF=$(curl -s -c "$ADMIN_JAR" -b "$ADMIN_JAR" "$BASE/api/csrf-token" | jq -r .csrfToken)
+  ACTIVATE_STATUS=$(curl -s -o /tmp/smoke-activate.json -w '%{http_code}' -c "$ADMIN_JAR" -b "$ADMIN_JAR" \
+    -X POST "$BASE/api/admin/users/$NEW_USER_ID/activate" -H 'Content-Type: application/json' -H "X-CSRF-Token: $ADMIN_CSRF" \
+    -d '{}')
+  expect_status 200 "$ACTIVATE_STATUS" "admin activate user"
+  pass "admin activated the new account via /api/admin/users/{id}/activate"
+fi
+
+echo "[4c] POST /api/photos now that the account is active"
 UPLOAD_STATUS=$(curl -s -o /tmp/smoke-photo.json -w '%{http_code}' -c "$JAR" -b "$JAR" \
   -X POST "$BASE/api/photos" -H "X-CSRF-Token: $CSRF" \
   -F "photo=@${PHOTO_PATH}" -F "lat=45.4642" -F "lon=9.1900" -F "cameraMake=Smoke")
@@ -125,7 +177,7 @@ STORAGE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/../storage/photos
 [ "$STORAGE_STATUS" != "200" ] || fail "storage directory appears to be directly web-reachable!"
 pass "storage directory not reachable (got $STORAGE_STATUS)"
 
-rm -f "$JAR" /tmp/smoke-*.json /tmp/smoke-preview.jpg /tmp/smoke-patch.json
+rm -f "$JAR" "$ADMIN_JAR" /tmp/smoke-*.json /tmp/smoke-preview.jpg /tmp/smoke-patch.json
 
 echo ""
 echo "== All smoke test steps passed =="

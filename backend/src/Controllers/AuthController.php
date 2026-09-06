@@ -7,6 +7,7 @@ namespace Photomap\Backend\Controllers;
 use Photomap\Backend\Http\JsonResponse;
 use Photomap\Backend\Http\Request;
 use Photomap\Backend\Repositories\UserRepository;
+use Photomap\Backend\Services\MailerInterface;
 use Photomap\Backend\Services\RateLimiter;
 use Photomap\Backend\Session;
 
@@ -18,7 +19,9 @@ final class AuthController
 
     public function __construct(
         private readonly UserRepository $users,
-        private readonly RateLimiter $rateLimiter
+        private readonly RateLimiter $rateLimiter,
+        private readonly MailerInterface $mailer,
+        private readonly ?string $adminNotifyEmail = null
     ) {
     }
 
@@ -48,7 +51,27 @@ final class AuthController
         $hash = password_hash($password, PASSWORD_DEFAULT);
         $id = $this->users->create($email, $hash);
 
-        return new JsonResponse(['id' => $id, 'email' => $email], 201);
+        // Best-effort, never blocks registration itself: if ADMIN_NOTIFY_EMAIL isn't
+        // configured (a legitimate, tolerated boot-time state for an incompletely-upgraded
+        // deploy) or the mail transport fails, this degrades to a logged no-op.
+        if ($this->adminNotifyEmail !== null && $this->adminNotifyEmail !== '') {
+            try {
+                $this->mailer->send(
+                    $this->adminNotifyEmail,
+                    'Photomap: new account registration',
+                    "A new account has registered and is pending approval:\n\n" .
+                    "Email: {$email}\n" .
+                    "User ID: {$id}\n\n" .
+                    'Activate or disable this account from the /admin console.'
+                );
+            } catch (\Throwable $e) {
+                error_log('AuthController::register: notification email failed: ' . $e->getMessage());
+            }
+        } else {
+            error_log('AuthController::register: ADMIN_NOTIFY_EMAIL is not configured; skipping new-registration notification.');
+        }
+
+        return new JsonResponse(['id' => $id, 'email' => $email, 'status' => 'pending'], 201);
     }
 
     public function login(Request $request): JsonResponse
@@ -87,13 +110,17 @@ final class AuthController
         }
 
         session_regenerate_id(true);
+        // A session is always exactly one identity — user or admin, never both. A browser
+        // that happens to hold an admin session in the same cookie must not keep it after a
+        // normal user logs in here.
+        unset($_SESSION['admin']);
         $_SESSION['user_id'] = (int) $user['id'];
         $_SESSION['email'] = $user['email'];
         Session::regenerateCsrfToken();
 
         $this->rateLimiter->recordAttempt($email, $ip, true);
 
-        return new JsonResponse(['id' => (int) $user['id'], 'email' => $user['email']]);
+        return new JsonResponse(['id' => (int) $user['id'], 'email' => $user['email'], 'status' => $user['status']]);
     }
 
     public function logout(Request $request): JsonResponse
@@ -112,6 +139,6 @@ final class AuthController
             return JsonResponse::error('unauthorized', 'Authentication required.', 401);
         }
 
-        return new JsonResponse(['id' => (int) $user['id'], 'email' => $user['email']]);
+        return new JsonResponse(['id' => (int) $user['id'], 'email' => $user['email'], 'status' => $user['status']]);
     }
 }

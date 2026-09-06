@@ -1,14 +1,56 @@
 .timeline-strip {
   position: relative;
   width: 100%;
-  height: 72px;
+  min-height: 72px;
   background: #fafafa;
   border-top: 1px solid #ddd;
+  padding-bottom: 2px;
 }
 
 .timeline-strip__canvas {
   display: block;
   cursor: pointer;
+}
+
+.timeline-strip__nav {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+}
+
+.timeline-strip__nav button {
+  background: none;
+  border: none;
+  color: #2f7de1;
+  cursor: pointer;
+  padding: 1px 3px;
+  font-size: 0.75rem;
+}
+
+.timeline-strip__nav button:disabled {
+  color: #333;
+  font-weight: 700;
+  cursor: default;
+}
+
+.timeline-strip__axis {
+  display: flex;
+  margin-left: 0;
+}
+
+.timeline-strip__axis-label {
+  background: none;
+  border: none;
+  border-right: 1px solid #eee;
+  font-size: 0.65rem;
+  color: #555;
+  cursor: pointer;
+  padding: 1px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .timeline-strip__clear {

@@ -1,0 +1,57 @@
+.admin-page {
+  min-height: 100vh;
+  background: #f5f6f7;
+}
+
+.admin-page--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: #444;
+}
+
+.admin-page__header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.6rem 1rem;
+  background: #1f2933;
+  color: #fff;
+  flex-wrap: wrap;
+}
+
+.admin-page__brand {
+  font-weight: 700;
+}
+
+.admin-page__tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.admin-page__tab {
+  background: none;
+  border: none;
+  color: #cfd8dc;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.admin-page__tab--active {
+  background: #34495e;
+  color: #fff;
+}
+
+.admin-page__account {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.admin-page__main {
+  padding: 1.25rem;
+}

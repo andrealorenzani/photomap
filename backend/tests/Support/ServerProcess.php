@@ -93,7 +93,14 @@ final class ServerProcess
             }
             [$key, $value] = array_pad(explode('=', $line, 2), 2, '');
             $value = trim($value);
-            $value = trim($value, '"');
+            if (strlen($value) >= 2
+                && (
+                    ($value[0] === '"' && $value[-1] === '"')
+                    || ($value[0] === "'" && $value[-1] === "'")
+                )
+            ) {
+                $value = substr($value, 1, -1);
+            }
             $env[trim($key)] = $value;
         }
 

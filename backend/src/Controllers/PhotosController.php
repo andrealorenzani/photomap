@@ -7,6 +7,7 @@ namespace Photomap\Backend\Controllers;
 use Photomap\Backend\Http\JsonResponse;
 use Photomap\Backend\Http\Request;
 use Photomap\Backend\Repositories\PhotoRepository;
+use Photomap\Backend\Services\AppSettingsService;
 use Photomap\Backend\Services\FileValidator;
 use Photomap\Backend\Services\ImageProcessor;
 use Photomap\Backend\Services\PhotoPresenter;
@@ -21,7 +22,8 @@ final class PhotosController
         private readonly StorageQuotaService $quota,
         private readonly PhotoPresenter $presenter,
         private readonly string $storagePath,
-        private readonly int $maxUploadBytes
+        private readonly int $maxUploadBytes,
+        private readonly AppSettingsService $appSettings
     ) {
     }
 
@@ -38,6 +40,14 @@ final class PhotosController
     public function store(Request $request): JsonResponse
     {
         $userId = (int) $_SESSION['user_id'];
+
+        if (!$this->appSettings->isUploadsGloballyEnabled()) {
+            return JsonResponse::error(
+                'uploads_disabled',
+                'Uploads are temporarily disabled by the site administrator.',
+                503
+            );
+        }
 
         $file = $request->file('photo');
         if ($file === null || !isset($file['tmp_name']) || $file['tmp_name'] === '' || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
@@ -194,6 +204,13 @@ final class PhotosController
     }
 
     /**
+     * Defense-in-depth for requirement 5 (account-mode GPS-less uploads are discarded
+     * client-side and must also never succeed if a client bypasses that check): absent
+     * lat/lon, or the exact (0, 0) "Null Island" sentinel the frontend already treats as
+     * no-GPS, is rejected with 422 gps_required rather than accepted as a valid no-GPS photo.
+     * There is no "guest mode" on the server — every request that reaches this controller is
+     * an authenticated, non-guest account, so this check applies unconditionally here.
+     *
      * @return array{0: ?float, 1: ?float, 2: ?JsonResponse}
      */
     private function parseLatLon(Request $request): array
@@ -202,7 +219,11 @@ final class PhotosController
         $lonRaw = $request->post('lon');
 
         if (($latRaw === null || $latRaw === '') && ($lonRaw === null || $lonRaw === '')) {
-            return [null, null, null];
+            return [null, null, JsonResponse::error(
+                'gps_required',
+                'A GPS location is required to upload a photo.',
+                422
+            )];
         }
 
         if ($latRaw === null || $latRaw === '' || $lonRaw === null || $lonRaw === '') {
@@ -218,6 +239,14 @@ final class PhotosController
 
         if ($lat < -90 || $lat > 90 || $lon < -180 || $lon > 180) {
             return [null, null, JsonResponse::error('invalid_coordinates', 'lat/lon out of range.', 422)];
+        }
+
+        if ($lat === 0.0 && $lon === 0.0) {
+            return [null, null, JsonResponse::error(
+                'gps_required',
+                'A GPS location is required to upload a photo.',
+                422
+            )];
         }
 
         return [$lat, $lon, null];

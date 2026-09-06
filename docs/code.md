@@ -4,9 +4,12 @@
 The frontend (guest mode + account mode, at the repo root) and the backend (PHP + MySQL accounts
 API, at `backend/`) are both implemented and, as of Phase 3, wired together over the backend's
 JSON HTTP API. They remain two separately runnable/deployable projects with no shared code — the
-frontend has no build-time dependency on the backend and vice versa. This document covers the
-frontend project first, then the backend project, then the root-level Docker/deployment tooling
-that spans both.
+frontend has no build-time dependency on the backend and vice versa. As of v1.0.0, both projects
+also include a registration-approval/admin-console feature set (a separate `/admin` frontend page
+and a separate `/api/admin/*` backend API, both structurally isolated from the main
+user-facing app/API), GPS-required account-mode uploads, and a calendar-axis drill-down layer on
+the timeline. This document covers the frontend project first, then the backend project, then the
+root-level Docker/deployment tooling that spans both.
 
 # Frontend (guest mode + account mode)
 
@@ -55,8 +58,9 @@ src/
   types.ts                    Shared domain model (PhotoRecord, MarkerGroup, worker messages,
                                 isUsableGPS() Null Island rule)
   types/leaflet.markercluster.d.ts   Ambient types for the untyped leaflet.markercluster plugin
-  Router.tsx                   Hand-rolled path matcher: `/` -> App, `/share/:token` -> SharePage
-                                (not react-router-dom — see docs/architecture.md)
+  Router.tsx                   Hand-rolled path matcher: `/` -> App, `/share/:token` -> SharePage,
+                                `/admin` -> AdminPage (not react-router-dom — see
+                                docs/architecture.md)
   state/
     photoStore.ts               Zustand store: photos (Map), ingest status, timeline dateFilter,
                                  searchFilters (date range/camera/has-location), selected-photo
@@ -66,6 +70,10 @@ src/
                                  'authenticated'|'guest'), current user; restoreSession/register/
                                  login/logout/deleteAccount; swaps the active PhotoRepository via
                                  lib/db on every status transition
+    adminStore.ts                 Separate Zustand store for the admin console (never touches
+                                 photoStore/authStore): session states 'idle'|'checking'|
+                                 'authenticated'|'anonymous'; restoreSession/login/logout/
+                                 clearError; reuses resetCsrfTokenCache() on logout
   lib/
     config.ts                    Reads runtime public/config.js (window.__PHOTOMAP_CONFIG__)
                                   layered over build-time VITE_* defaults; exposes
@@ -76,6 +84,9 @@ src/
                                   413 quota_exceeded/422 from generic failures)
       authApi.ts, photosApi.ts, shareLinksApi.ts, accountApi.ts, shareApi.ts
                                   Thin per-resource wrappers over http.ts
+      adminApi.ts                  Thin wrappers over http.ts for every /api/admin/* endpoint
+                                  (login/logout/me, users list/activate/disable, settings
+                                  get/update, stats)
     db/
       schema.ts                  IndexedDB schema (photoMeta, photoBlobs, folders stores)
       photoRepository.ts         PhotoRepository interface + IndexedDbPhotoRepository;
@@ -107,7 +118,13 @@ src/
     grouping.ts                   Latitude-corrected ~50m grid bucketing (gridKey,
                                   computeMarkerGroups)
     timeline.ts                   Pure binning/domain/intensity/hit-testing logic for the
-                                  timeline strip
+                                  timeline strip; plus (v1.0.0) computeYearBins/
+                                  computeMonthBins/computeDayBins, yearsPresent, MONTH_LABELS,
+                                  and an optional `label` field on TimelineBin, backing the
+                                  calendar-axis drill-down layer
+    adminUsers.ts                  Pure admin-console helpers: buildAdminUsersQuery,
+                                  nextSortState, formatShareLinkStatus (existence+timestamp
+                                  only, never a URL/token), formatUserStatusLabel, formatBytes
     exifWorkerPool.ts             Round-robin 2-4 Web Worker pool with progress tracking and
                                   cancellation
     stableId.ts                   FNV-1a hash of (relativePath, size, lastModified) — the
@@ -116,7 +133,8 @@ src/
                                   (webkitGetAsEntry)
     objectUrlCache.ts / useObjectUrl.ts   LRU cache of blob object URLs with explicit
                                   revocation on delete
-    format.ts                     Small display-formatting helpers
+    format.ts                     Small display-formatting helpers; gained
+                                  formatServerDateTime() (v1.0.0, used by the admin console)
   workers/
     exifWorker.ts                 Runs off the main thread: exifr.parse() for EXIF metadata,
                                   then createImageBitmap + OffscreenCanvas to generate a
@@ -135,8 +153,14 @@ src/
                                   mutually exclusive with PrivacyNote
     PrivacyNote.tsx                Persistent "Guest mode: your photos never leave this
                                   device." note; hidden while authenticated
+    RegistrationNoticeModal.tsx     (v1.0.0) Shown when submitting the registration form, before
+                                  the account is created: admin-approval gate, private-by-default
+                                  sharing, email-as-notification-address, Guest Mode uploads
+                                  nothing; only explicit acknowledgement calls register()
     UploadControl.tsx              Folder picker + drag-and-drop zone
-    StatusPanel.tsx                Live processed/with-GPS/without-GPS counts + progress bar
+    StatusPanel.tsx                Live processed/with-GPS/"Discarded (No GPS)" counts + progress
+                                  bar; renders an optional gpsRequiredNotice alert (v1.0.0) when
+                                  an account-mode upload was rejected for missing GPS
     FilterBar.tsx                  Date-range/camera make-model/has-location filter controls,
                                   writing to photoStore's searchFilters slice
     UnlocatedPhotosPanel.tsx       Panel of GPS-less photos, draggable onto the map to assign
@@ -151,12 +175,27 @@ src/
                                   Detailed, choice persisted to localStorage only
     TimelineStrip.tsx              Custom canvas density-heatmap timeline component with an
                                   "Unknown date" bucket for photos with no datetime; optional
-                                  `photos`/controlled `dateFilter` props for the share view
+                                  `photos`/controlled `dateFilter` props for the share view; gained
+                                  (v1.0.0) a `density|year|month|day` calendar-axis navigation
+                                  level with breadcrumbs and an HTML axis-label row under the
+                                  canvas, drilling down at year/month and applying the existing
+                                  date-filter behavior at day level (the original density mode is
+                                  unchanged and remains the default view)
     PhotoThumbStrip.tsx            Chronological thumbnail strip (marker popups and
                                   timeline-filtered results); optional `photos`/`readOnly` props
     FullSizeViewer.tsx             Full-size photo view; datetime-only overlay banner; delete
                                   action; optional `photos`/`readOnly` props
     (each *.tsx has a matching *.css)
+  components/admin/                 (v1.0.0) Admin-console-only components, never importing
+                                  photoStore/authStore:
+    AdminLoginForm.tsx               Username/password form for the separate adminStore session
+    AdminUsersPanel.tsx              Search/status-filter/sort-by-email-or-registration-date/
+                                  pagination; per-row activate-with-quota and disable-with-
+                                  confirmation; share-link column renders existence+timestamp
+                                  only via lib/adminUsers.ts's formatShareLinkStatus, never a URL
+    AdminSettingsPanel.tsx           Default storage quota, global upload on/off toggle, and
+                                  stats (counts by status, total photos, total bytes) from
+                                  GET /api/admin/stats
   pages/
     SharePage.tsx                  Public read-only `/share/{token}` view: fetches
                                   GET /api/share/{token} into local component state (never the
@@ -165,6 +204,12 @@ src/
                                   TimelineStrip/PhotoThumbStrip/FullSizeViewer with
                                   `photos`/`readOnly` set; no upload/delete/login affordances;
                                   filters and the map-style toggle remain available
+    AdminPage.tsx                  (v1.0.0) `/admin` route: login gate (AdminLoginForm) then
+                                  Users/Settings tabs (AdminUsersPanel/AdminSettingsPanel);
+                                  fetches the global default quota once on mount so the Users
+                                  tab's activate-quota prefill works regardless of tab order;
+                                  entirely separate from photoStore/authStore, mirroring
+                                  SharePage's separation pattern
   main.tsx, App.tsx, App.css, index.css, vite-env.d.ts
 test/
   fixtures/                      Real sample JPEGs (and one HEIC) with deliberate EXIF
@@ -254,8 +299,8 @@ integers, not the client-generated stable hash (see "id reconciliation" above).
 ## Testing
 
 Vitest (jsdom environment) + Testing Library for React component tests. Run via `npm test`
-(single run) or `npm run test:watch`. As of this change: **19 test files, 135 tests, all
-passing.**
+(single run) or `npm run test:watch`. As of this change (v1.0.0): **24 test files, 173 tests, all
+passing** (up from 19 files / 135 tests before this change).
 
 Fixtures (`test/fixtures/`) are real sample images with deliberately varied EXIF: GPS +
 datetime; datetime-only/no GPS; GPS without an offset-time tag; a HEIC sample; a corrupted/
@@ -298,7 +343,20 @@ Coverage by file:
   global store's `photos.size` stays 0 throughout), `readOnly` behavior, filters/style toggle
   still available.
 - `components.test.tsx` — thumbnail strip sorting/deletion, full-size viewer, status panel,
-  privacy note, `TopBanner`'s login/register/logged-in states.
+  privacy note, `TopBanner`'s login/register/logged-in states, registration-notice gating
+  (v1.0.0), and the "Discarded (No GPS)" label rename.
+- `adminUsers.test.ts` (v1.0.0) — pure helper coverage: query building, sort-state cycling,
+  share-link status formatting (existence+timestamp only, never a URL), status labels, byte
+  formatting.
+- `adminStore.test.ts` (v1.0.0) — admin session restore/login/logout state transitions.
+- `adminPage.test.tsx` (v1.0.0) — login gate, Users/Settings tab switching.
+- `adminUsersPanel.test.tsx` (v1.0.0) — search/filter/sort/pagination, activate-with-quota and
+  disable-with-confirmation flows.
+- `timelineStrip.test.tsx` (v1.0.0) — the `density|year|month|day` drill-down navigation level,
+  breadcrumbs, and axis labels, alongside the pre-existing unchanged density-mode behavior.
+- `timeline.test.ts` and `router.test.tsx` and `ingest.test.ts` (all pre-existing) gained v1.0.0
+  extensions: `computeYearBins`/`computeMonthBins`/`computeDayBins` coverage; the `/admin` route
+  match; and `gps_required`-triggered `gpsRequiredNotice` handling, respectively.
 
 Not practical to automate in this environment, left as a manual checklist instead: real
 cross-browser drag-and-drop/folder-picker behavior, Leaflet map bounds-fitting in a live
@@ -335,7 +393,7 @@ the full API table, the CORS/cross-origin-cookie section, and a copy-pasteable c
 Other scripts:
 
 ```bash
-composer test               # phpunit — 117 tests (53 Unit + 64 Feature)
+composer test               # phpunit — 166 tests, 440 assertions
 bash scripts/smoke-test.sh http://localhost:8000   # runnable curl walkthrough (requires curl, jq)
 bash scripts/package-for-deploy.sh          # assembles a release/ artifact for shared-hosting deploy
 ```
@@ -352,6 +410,8 @@ distinct from the root `docker-compose.yml` (whole-stack, see "Docker" below).
 - `ext-curl` for the Nominatim HTTP client, behind a `GeocodeClientInterface` so tests never hit
   the real Nominatim service
 - `vlucas/phpdotenv` for `.env` loading
+- PHP's built-in `mail()` for notification emails (v1.0.0), behind a `MailerInterface` so tests
+  never send real mail
 - Dev: `phpunit/phpunit` ^10
 
 ## Project layout
@@ -372,10 +432,14 @@ backend/
     Session.php                    Native PHP session bootstrap; HttpOnly cookie, Secure gated
                                     by APP_ENV=production, SameSite configurable
                                     (SESSION_COOKIE_SAMESITE, default Lax); CSRF token seeding
-    Bootstrap.php                  Wires dependencies and routes together, including the new
-                                    PATCH /api/photos/{id} route
+    Bootstrap.php                  Wires dependencies and routes together, including
+                                    PATCH /api/photos/{id} and (v1.0.0) every /api/admin/* route;
+                                    resolveDefaultMailer() picks FakeMailer (MAIL_TRANSPORT=fake,
+                                    used by tests) or PhpMailMailer otherwise
     Http/
-      Request.php, Response.php, JsonResponse.php
+      Request.php, Response.php, JsonResponse.php   JsonResponse's json_encode() call now passes
+                                    JSON_PRESERVE_ZERO_FRACTION (v1.0.0 fix — a whole-number float
+                                    like lat/lon 12.0 no longer silently round-trips as an int)
     Routing/
       Router.php                   Hand-rolled method+regex path matcher -> handler
     Middleware/
@@ -386,27 +450,56 @@ backend/
                                     (CORS_ALLOWED_ORIGINS, default empty = no CORS headers);
                                     handles OPTIONS preflight; Access-Control-Allow-Credentials:
                                     true + echoed exact origin + Vary: Origin, never a wildcard
+      AccountStatusMiddleware.php   (v1.0.0) Blocks a request based on the session user's live
+                                    `status`; wired twice — broad (blocks `disabled`) on every
+                                    authenticated route, narrow (blocks `disabled`+`pending`) on
+                                    POST /api/photos only, so pending accounts can do everything
+                                    except upload
+      AdminAuthMiddleware.php       (v1.0.0) Checks a distinct $_SESSION['admin'] flag (never
+                                    $_SESSION['user_id']); returns 503 admin_not_configured if
+                                    ADMIN_USERNAME/ADMIN_PASSWORD_HASH are unset, 401 otherwise
     Controllers/
-      AuthController.php           register, login, logout, csrfToken, me
+      AuthController.php           register (inserts status='pending', best-effort emails
+                                    ADMIN_NOTIFY_EMAIL — v1.0.0), login, logout, csrfToken, me
       AccountController.php        DELETE /api/account (transactional row+file cascade delete)
-      PhotosController.php         index, store (upload pipeline), update (PATCH — lat/lon
-                                    only, 404-not-403 ownership), destroy
+      PhotosController.php         index, store (upload pipeline; v1.0.0: rejects with
+                                    422 gps_required if the photo has no usable GPS, for
+                                    account-mode uploads only), update (PATCH — lat/lon only,
+                                    404-not-403 ownership), destroy
       MediaController.php          Signed-URL image/thumbnail byte streaming
       ShareLinksController.php     store (rotate: revoke-old-then-create-new), destroy (revoke)
       ShareController.php          Public show(token) — read-only, respects revoked_at
       GeocodeController.php        Cache-first Nominatim proxy
+      AdminAuthController.php      (v1.0.0) login (password_verify(), rate-limited, timing-safe
+                                    dummy-hash comparison on username mismatch), logout, me
+      AdminUsersController.php     (v1.0.0) index (search/filter/sort/paginate; share-link column
+                                    is existence+timestamp only, never the token), activate
+                                    (optional per-user quota override, sends activation email),
+                                    disable (sends disable email)
+      AdminSettingsController.php  (v1.0.0) show/update — default_storage_quota_bytes,
+                                    uploads_enabled
+      AdminStatsController.php     (v1.0.0) show — counts by status, total photos, total bytes
     Repositories/
       UserRepository.php, PhotoRepository.php (now includes updateLocation()),
       ShareLinkRepository.php, GeocodeCacheRepository.php, LoginAttemptRepository.php
-      (all parameterized PDO)
+      (all parameterized PDO); UserRepository gained (v1.0.0) status/quota/search/sort/filter/
+      count methods and countByStatus(); ShareLinkRepository gained (v1.0.0)
+      findActiveCreatedAtForUser() — selects only `created_at`, never `token`, so the raw
+      share URL is structurally unreachable from the admin code path
+      AppSettingsRepository.php    (v1.0.0) Reads/writes the singleton app_settings row
     Services/
       ImageProcessor.php           GD: EXIF-orient, resize <=2000px q85, thumbnail 320px q80,
                                     no-upscale, alpha-flatten-to-JPEG, corrupt-image rejection
       FileValidator.php            finfo real-content-type + size checks (never trusts extension
                                     or client-supplied MIME type)
       StorageQuotaService.php      Row-locked reserveAndInsert() — quota check + photo insert in
-                                    one transaction, race-safe under concurrent uploads
-      RateLimiter.php              Failed-login throttling, per-account + per-IP
+                                    one transaction, race-safe under concurrent uploads; resolves
+                                    a per-user quota (v1.0.0: the user's own storage_quota_bytes
+                                    if set, else app_settings.default_storage_quota_bytes) instead
+                                    of a flat constant; retries up to 3 times with backoff on a
+                                    genuine MySQL deadlock (SQLSTATE 40001)
+      RateLimiter.php              Failed-login throttling, per-account + per-IP; reused as-is
+                                    for admin login
       SignedUrl.php                HMAC sign/verify for owner (15 min) and share (10 min)
                                     context media URLs; untouched by PATCH, which only ever
                                     writes lat/lon
@@ -417,13 +510,20 @@ backend/
                                     precision
       PhotoPresenter.php           Shapes a photo row + fresh signed URLs into JSON
       ProcessedImage.php           Value object returned by ImageProcessor
+      AppSettingsService.php       (v1.0.0) Thin service wrapping AppSettingsRepository
+      MailerInterface.php          (v1.0.0) send(to, subject, body): void
+      PhpMailMailer.php            (v1.0.0) Production implementation, PHP's mail(); every call
+                                    site wraps sends in catch-and-log, never blocking the
+                                    triggering action
   storage/                          OUTSIDE public/, never web-reachable
     photos/{user_id}/{random32hex}.jpg
     thumbnails/{user_id}/{random32hex}.jpg
   migrations/
     0001_create_users.sql, 0002_create_photos.sql, 0003_create_share_links.sql,
     0004_create_geocode_cache.sql, 0005_create_login_attempts.sql,
-    0006_create_nominatim_rate_limit.sql
+    0006_create_nominatim_rate_limit.sql, 0007_add_user_status_and_quota.sql (adds
+    users.status/storage_quota_bytes/approved_at, grandfathers pre-existing rows to 'active'),
+    0008_create_app_settings.sql (singleton app_settings row, seeded with a 100MB default)
   scripts/
     migrate.php                    CLI runner; idempotent, tracks applied filenames in a
                                     schema_migrations table it creates automatically
@@ -452,30 +552,44 @@ backend/
                                     tiny JPEGs, a WebP, a PNG with alpha
     Unit/                          CsrfMiddleware, FileValidator, GeocodeController, ImageProcessor,
                                     NominatimClient, NominatimRateLimiter, RateLimiter, SignedUrl,
-                                    StorageQuotaService, Config (config.php/.env precedence — new,
-                                    see "Testing" below) (53 tests)
+                                    StorageQuotaService, Config (config.php/.env precedence),
+                                    AdminAuthController (v1.0.0), MailNotifications (v1.0.0),
+                                    UserRepository (v1.0.0) — see "Testing" below
     Feature/                       Auth, Cors, Csrf, Geocode, Ownership, Photos, PhotoUpdate,
                                     ProductionCookie, Quota, RateLimit, SecurityFeature,
-                                    ShareLinks (64 tests) — each boots a real `php -S` subprocess
-                                    and drives it over real HTTP
-    Support/                       ServerProcess (subprocess lifecycle), HttpClient/HttpResponse
+                                    ShareLinks, AdminAuth (v1.0.0), AdminUsers (v1.0.0 — includes
+                                    a dedicated test asserting the share-link indicator is
+                                    existence-only, never the raw token), GpsRequired (v1.0.0),
+                                    RegistrationApproval (v1.0.0) — each boots a real `php -S`
+                                    subprocess and drives it over real HTTP
+    Support/                       ServerProcess (subprocess lifecycle; its .env.test quote-
+                                    stripping parser was fixed in v1.0.0 to handle single-quoted
+                                    values, not just double-quoted), HttpClient/HttpResponse
                                     (curl wrapper, now with patchJson()/options()),
                                     DatabaseTestCase/FeatureTestCase (base classes),
                                     FakeHttpServer, concurrent_upload_worker.php (real multi-process
                                     concurrency test for the quota row-lock),
-                                    nominatim_lookup_worker.php
+                                    nominatim_lookup_worker.php, FakeMailer/FailingFakeMailer
+                                    (v1.0.0 — MAIL_TRANSPORT=fake test doubles for MailerInterface)
   composer.json, composer.lock
-  .env.example, .env.test, .gitignore   .env.example now documents CORS_ALLOWED_ORIGINS and
-                                    SESSION_COOKIE_SAMESITE
-  README.md                        Standalone run instructions, API table (including the PATCH
-                                    row), CORS/cross-origin-cookie section, curl walkthrough
+  .env.example, .env.test, .gitignore   .env.example documents CORS_ALLOWED_ORIGINS,
+                                    SESSION_COOKIE_SAMESITE, and (v1.0.0) ADMIN_USERNAME/
+                                    ADMIN_PASSWORD_HASH/ADMIN_NOTIFY_EMAIL/MAIL_* settings, with
+                                    inline admin-hash-generation instructions
+  README.md                        Standalone run instructions, API table (including PATCH and
+                                    the /api/admin/* routes), CORS/cross-origin-cookie section,
+                                    curl walkthrough, and an "Admin console" section with a
+                                    copy-pasteable password_hash() one-liner
   docker/ (Dockerfile, init.sql), docker-compose.yml   Backend-only dev/test convenience,
                                     distinct from the root docker-compose.yml
 ```
 
 ## Data model (MySQL)
 
-- `users` — id, `email` (unique), `password_hash`, `created_at`.
+- `users` — id, `email` (unique), `password_hash`, `status` (v1.0.0: `ENUM('pending','active',
+  'disabled')`, default `pending`; indexed), `storage_quota_bytes` (v1.0.0: nullable — `NULL`
+  means "use `app_settings.default_storage_quota_bytes`"), `approved_at` (v1.0.0, nullable),
+  `created_at` (indexed, v1.0.0 — backs the admin user list's sort-by-registration-date).
 - `photos` — id, `user_id` (FK, `ON DELETE CASCADE`), `storage_path`, `thumbnail_path`,
   `file_size_bytes` (backs the quota `SUM()` query), `lat`/`lon` (nullable, updatable via
   `PATCH /api/photos/{id}`), `taken_at` (nullable), `camera_make`, `camera_model`, `created_at`;
@@ -488,6 +602,9 @@ backend/
   `(email, created_at)` and `(ip_address, created_at)`. Backs failed-login rate limiting.
 - `nominatim_rate_limit` — single sentinel row; `last_request_at` is a `DOUBLE` (microtime), not
   a `DATETIME`, for sub-second precision (a deliberate deviation — see `docs/plans.md`).
+- `app_settings` (v1.0.0) — a singleton row (`id` fixed to `1` via a `CHECK` constraint):
+  `default_storage_quota_bytes`, `uploads_enabled`, `updated_at`. Seeded by migration 0008 with a
+  100MB default and uploads enabled.
 
 File paths are `SELECT`ed inside the same transaction as a DB delete, and files are `unlink()`'d
 only after the transaction commits. `PATCH /api/photos/{id}` never touches file paths — it writes
@@ -516,12 +633,26 @@ only `lat`/`lon`.
   rollback error); a failed migration aborts the script before being recorded as applied.
 - `PATCH /api/photos/{id}` is allowed for any owned photo, not restricted to currently-GPS-less
   ones — consistent with the other photo endpoints' unrestricted-within-ownership design.
+- (v1.0.0) A `pending` account can log in and use every feature except uploading; only a
+  `disabled` account is blocked from everything. Migration 0007's grandfathering `UPDATE` runs
+  exactly once, at migration time — it cannot affect a genuinely new registration made after the
+  migration has already run, since new registrations always insert `status='pending'` explicitly.
+- (v1.0.0) Leaving `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` unset does not break anything else: every
+  `/api/admin/*` route returns `503 admin_not_configured`, and every other route is unaffected.
+- (v1.0.0) All admin/registration/activation/disable emails are sent best-effort — a mail failure
+  (including via `FailingFakeMailer` in tests) is caught and logged, never surfaced to or blocking
+  the triggering user/admin action.
+- (v1.0.0) `StorageQuotaService::reserveAndInsert()` retries up to 3 times with backoff on a
+  genuine MySQL deadlock (SQLSTATE `40001`), verified with repeated runs of a dedicated
+  multi-process concurrency test; this is a robustness fix made during this change's own test
+  audit, not a change in the quota's semantics.
 
 ## Testing
 
-PHPUnit 10. Run via `composer test` from `backend/`. As of this change: **117 tests, 274
-assertions, 0 failures** (53 Unit + 64 Feature), run twice via Docker (MySQL 8 + php:8.3) for
-stability.
+PHPUnit 10. Run via `composer test` from `backend/`. As of this change (v1.0.0): **166 tests, 440
+assertions, 0 failures**, confirmed deterministic across multiple independent clean runs via
+Docker (MySQL + php:8.3) — up from 117 tests / 274 assertions (53 Unit + 64 Feature) before this
+change.
 
 - **Unit tests** (`tests/Unit/`): CSRF token comparison logic; image resize/EXIF-orientation/
   no-upscale/corrupt-image-rejection behavior; finfo-based file-type sniffing; quota math
@@ -534,7 +665,11 @@ stability.
   `config.php`-only, `.env`-only (regression), both-present precedence (`config.php` wins),
   neither-present (defaults/`require()` throws), a malformed (non-array-returning) `config.php`,
   a `config.php` with a genuine PHP parse error, and an end-to-end `Database::connect()` check
-  picking up `config.php`-sourced real test-DB credentials.
+  picking up `config.php`-sourced real test-DB credentials; **(v1.0.0) `AdminAuthControllerTest`**
+  (password_verify() success/failure, timing-safe dummy-hash comparison on username mismatch),
+  **`MailNotificationsTest`** (registration/activation/disable emails sent via the fake mailer,
+  including a failing-mailer case proving the triggering action still succeeds), and
+  **`UserRepositoryTest`** (status/quota/search/sort/filter/count queries).
 - **Feature tests** (`tests/Feature/`): each test class boots a real `php -S` subprocess
   (`tests/Support/ServerProcess.php`) and drives it over real HTTP via curl
   (`tests/Support/HttpClient.php`). Covers auth flows (register/login/logout/me), CSRF
@@ -550,7 +685,14 @@ stability.
   testNoStrayConfigPhpShadowsEnvTestFixtures()` — asserts no stray `config.php` sits in the
   backend root during the Feature suite (which would silently shadow `.env.test` for every test
   in the suite) and that `.env.test`'s dedicated test-only session cookie name is genuinely the
-  one in use.
+  one in use; **(v1.0.0) `AdminAuthFeatureTest`** (login/logout/me over real HTTP, rate limiting,
+  `admin_not_configured` when unset), **`AdminUsersFeatureTest`** (search/filter/sort/pagination,
+  activate/disable end-to-end including the resulting emails, and a dedicated test asserting the
+  share-link indicator is existence-only and never returns the raw token), **`GpsRequiredFeatureTest`**
+  (account-mode upload with no GPS rejected with `422 gps_required`), and
+  **`RegistrationApprovalFeatureTest`** (a newly-registered account can log in but not upload
+  until activated; a disabled account is blocked entirely; the migration-time grandfathering
+  behavior).
 - Not covered by the automated Feature tier: cache-hit/miss/rounding/rate-limiting-spacing
   behavior of `GET /api/geocode` against a live server, since the live server always wires the
   real `NominatimClient` and the plan requires never calling real Nominatim in tests — that
@@ -564,6 +706,14 @@ stability.
   passes all steps (including the PATCH step) against a real `php -S` dev server; `php -l` clean
   on every `src/`, `tests/`, `scripts/`, `public/` file, including all new/modified files for this
   change.
+- **(v1.0.0) Test-infrastructure fixes made during this change's own audit** (not feature-logic
+  bugs — see `docs/architecture.md`'s Phase 5 section for the full root-cause writeup): fixed
+  `tests/Support/ServerProcess.php`'s `.env.test` quote-stripping to handle single-quoted values
+  (previously broke `password_verify()` for every admin Feature test); added a deadlock-retry loop
+  to `StorageQuotaService::reserveAndInsert()`; fixed an `AdminUsersFeatureTest` case that reused
+  one HTTP client/cookie jar across two logged-in users, invalidating a CSRF token; and added
+  `JSON_PRESERVE_ZERO_FRACTION` to `JsonResponse.php` globally (a pre-existing, unrelated latent
+  bug newly exposed by round-number-coordinate test fixtures).
 - **Shared-hosting deploy verification** (new, on-demand tooling, not wired into default CI):
   `deploy/dreamhost/verify-apache-routing.sh` runs a Docker-based `php:8.3-apache` container
   (`mod_rewrite` enabled, `AllowOverride All`) against a packaged `release/` artifact and checks

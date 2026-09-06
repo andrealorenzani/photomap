@@ -101,4 +101,31 @@ final class PhotoRepository
 
         return $stmt->fetchAll();
     }
+
+    /**
+     * Admin listing support: a single aggregated GROUP BY query for every user's storage
+     * usage, instead of one query per row (N+1).
+     *
+     * @return array<int, int> Keyed by user_id.
+     */
+    public function sumBytesGroupedByUser(): array
+    {
+        $stmt = $this->pdo->query('SELECT user_id, SUM(file_size_bytes) AS total FROM photos GROUP BY user_id');
+        $result = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $result[(int) $row['user_id']] = (int) $row['total'];
+        }
+
+        return $result;
+    }
+
+    public function countAll(): int
+    {
+        return (int) $this->pdo->query('SELECT COUNT(*) AS c FROM photos')->fetch()['c'];
+    }
+
+    public function sumAllBytes(): int
+    {
+        return (int) $this->pdo->query('SELECT COALESCE(SUM(file_size_bytes), 0) AS total FROM photos')->fetch()['total'];
+    }
 }

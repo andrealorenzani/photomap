@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { filterImageFiles, ingestFiles } from '../src/lib/ingest';
 import { usePhotoStore } from '../src/state/photoStore';
 import { getActiveRepository, IndexedDbPhotoRepository, setActiveRepository, type PhotoRepository } from '../src/lib/db';
+import { ApiError } from '../src/lib/api/http';
 import type { PhotoRecord, WorkerParseRequest, WorkerResponse } from '../src/types';
 
 function resetStore() {
@@ -228,5 +229,86 @@ describe('ingest id reconciliation (client-generated vs. server-assigned ids)', 
     expect(photos.has(`api:${clientId}`)).toBe(true);
     expect(photos.size).toBe(1);
     expect(fakeRepo.addedUnderId).toEqual([clientId]);
+  });
+});
+
+/** A fake PhotoRepository whose add() always rejects with the given error. */
+class FailingFakeRepository implements PhotoRepository {
+  constructor(private readonly error: unknown) {}
+
+  async list(): Promise<PhotoRecord[]> {
+    return [];
+  }
+
+  async add(): Promise<PhotoRecord> {
+    throw this.error;
+  }
+
+  async remove(): Promise<void> {}
+  async updateLocation(): Promise<void> {}
+  async getBlob(): Promise<Blob | undefined> {
+    return undefined;
+  }
+  async clearAll(): Promise<void> {}
+  async estimateUsage() {
+    return undefined;
+  }
+  async requestPersistence(): Promise<boolean> {
+    return false;
+  }
+}
+
+describe('ingest surfaces account-mode upload failures distinctly by type', () => {
+  const previousRepository = getActiveRepository();
+
+  beforeEach(() => {
+    resetStore();
+  });
+
+  afterEach(() => {
+    setActiveRepository(previousRepository ?? new IndexedDbPhotoRepository());
+  });
+
+  it('a 422 gps_required ApiError sets a distinct gpsRequiredNotice, without incrementing the generic uploadFailures counter', async () => {
+    setActiveRepository(
+      new FailingFakeRepository(
+        new ApiError(422, 'gps_required', 'A GPS location is required to upload a photo.', null)
+      )
+    );
+
+    const callLog: string[] = [];
+    const factory = makeFakeWorkerFactory(
+      (req) => ({ type: 'parsed', id: req.id, meta: { takenAtISO: '2023-01-01T00:00:00.000Z' } }),
+      callLog
+    );
+
+    const file = new File(['x'], 'no-gps.jpg', { type: 'image/jpeg', lastModified: 1000 });
+    ingestFiles([file], { workerFactory: factory, poolSize: 1 });
+    await waitForParsingToFinish();
+    await waitFor(() => usePhotoStore.getState().status.gpsRequiredNotice !== undefined);
+
+    const status = usePhotoStore.getState().status;
+    expect(status.gpsRequiredNotice).toMatch(/no-gps\.jpg/);
+    expect(status.gpsRequiredNotice).toMatch(/GPS/i);
+    expect(status.uploadFailures).toBe(0);
+  });
+
+  it('a generic (non-quota, non-gps_required) failure still falls back to the existing uploadFailures/storageWarning path', async () => {
+    setActiveRepository(new FailingFakeRepository(new Error('boom')));
+
+    const callLog: string[] = [];
+    const factory = makeFakeWorkerFactory(
+      (req) => ({ type: 'parsed', id: req.id, meta: { takenAtISO: '2023-01-01T00:00:00.000Z' } }),
+      callLog
+    );
+
+    const file = new File(['x'], 'oops.jpg', { type: 'image/jpeg', lastModified: 1000 });
+    ingestFiles([file], { workerFactory: factory, poolSize: 1 });
+    await waitForParsingToFinish();
+    await waitFor(() => usePhotoStore.getState().status.uploadFailures > 0);
+
+    const status = usePhotoStore.getState().status;
+    expect(status.uploadFailures).toBe(1);
+    expect(status.gpsRequiredNotice).toBeUndefined();
   });
 });

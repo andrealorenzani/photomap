@@ -26,6 +26,9 @@ abstract class DatabaseTestCase extends TestCase
             $this->pdo->exec("TRUNCATE TABLE {$table}");
         }
         $this->pdo->exec('UPDATE nominatim_rate_limit SET last_request_at = NULL WHERE id = 1');
+        $this->pdo->exec(
+            'UPDATE app_settings SET default_storage_quota_bytes = 104857600, uploads_enabled = 1 WHERE id = 1'
+        );
         $this->pdo->exec('SET FOREIGN_KEY_CHECKS=1');
     }
 
