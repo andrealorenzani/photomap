@@ -256,3 +256,23 @@ Review `docs/product.md` (260 lines), `docs/architecture.md` (754 lines), and `d
 - Q: Does the analyser still run an advisor-equivalent "revise if needed" loop, or just one pass? A: One pass is fine (draft the plan, then critique your own draft against the same concerns the old advisor agent checked for — feasibility, security requirements on the PHP/MySQL backend, consistency with current docs — and fix issues before returning), since the old advisor's realistic value was mostly catching things the four separate briefings missed by not talking to each other; a single agent with the full picture already avoids most of that failure mode.
 
 Please update all docs to reflect the completed v1.0.0 state now that implementation and independent verification are both done.
+
+---
+
+## 2026-09-06 — Registration Hardening, Deploy Automation, UI/Map Layout Fixes, Countries-Visited Feature, and Dreamhost De-Branding
+
+The original user request bundled six independent asks into one release. The coordinator's analysis run did not have the AskUserQuestion tool available, so the one genuinely open question in this request (whether to add a third-party CAPTCHA) was resolved by the coordinator adopting the analyser's own recommendation rather than asking the user directly — see `docs/plans.md`'s corresponding plan entry for that resolution. Reconstructed here as faithfully as possible from the finalized plan's own "Context of the changes" section, since that is the closest verbatim record of the six-item original ask available to the implementer:
+
+1. De-brand deploy docs/scripts: the user deploys to Dreamhost personally but does not want the product's own committed docs/scripts to name that host. Everything under `docs/*.md`, `README.md`, `backend/README.md`, `backend/config.php.example`, code comments, and the `deploy/dreamhost/` directory name itself currently advertise "Dreamhost" as the worked example, even though the mechanism was always documented as generic Apache+PHP+MySQL shared hosting. Pure de-branding, no behavior changes — but `docs/plans.md` and `docs/original_prompts.md` (this file) are append-only historical records and must not be retroactively edited to remove "Dreamhost" from earlier entries.
+
+2. Deploy automation: `npm run release` only builds the local `release/` artifact today; the user still has to manually SFTP two directories and SSH in to run the migration script. Add an opt-in automated upload+remote-migrate path, gated behind a gitignored, chmod-600, key-auth-only config file, with a concrete numbered manual fallback always available.
+
+3. UI overlap bugfix: `StatusPanel` and `MapStyleToggle` are both absolutely positioned in the exact same top-right corner of the map, with near-identical offsets and identical stacking level — a real, reproducible overlap.
+
+4. Map zoom-out world-repeat + layout share: the Leaflet map has no `minZoom`, no `maxBounds`, no `noWrap`, so it repeats the world horizontally at low zoom. Separately, the map should visually dominate the viewport (large majority) while controls live in a genuine side region rather than floating over it.
+
+5. Countries-visited feature: a new client-derived view — for every photo with usable GPS, resolve which country it was taken in and which month/year(s) photos exist for that country. Must work identically in guest mode (no GPS coordinates ever leave the device) and account mode, so it needs to be a new, fully client-side, offline country-boundary lookup, not the existing account-mode-only `geocode_cache`/Nominatim path.
+
+6. Registration anti-spam hardening: `AuthController::register()` has zero throttling today — no honeypot, no timing check, no disposable-domain check, only email-uniqueness and an 8-char password minimum. Login already has per-account/per-IP rate limiting; registration should get an equivalent no-dependency anti-spam stack, closing the gap before a bot signup ever reaches the existing v1.0.0 admin-approval queue. Whether to also add a third-party CAPTCHA was left as an open question for the coordinator/analyser to resolve (see above).
+
+In addition, the coordinator instructed: none of these six items should change guest mode's "photos never leave the browser" guarantee; document every architectural decision (including the CAPTCHA non-decision, explicitly flagged as revisitable) in `docs/architecture.md`; keep the crash-resumability state-file process from the v1.1.0 process-tooling release; and report exact backend/frontend test pass/fail counts in the final summary.

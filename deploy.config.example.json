@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy this file to deploy.config.json (repo root) and fill in real values. deploy.config.json is gitignored -- never commit real credentials. Password-based auth is not supported by the automated path for security reasons -- see deploy.sh's fallback instructions if you only have password auth to your host.",
+
+  "sshHost": "yourdomain.com",
+  "sshPort": 22,
+  "sshUser": "yourusername",
+  "sshKeyPath": "~/.ssh/id_ed25519",
+  "remoteBackendPath": "~/photomap-backend",
+  "remoteFrontendPath": "~/yourdomain.com",
+  "remoteMigrateCommand": "cd ~/photomap-backend && php scripts/migrate.php",
+  "postDeployCommands": []
+}

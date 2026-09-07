@@ -17,7 +17,7 @@ interface AuthState {
   error: string | null;
 
   restoreSession: () => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, honeypot: string, formRenderedAt: number) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   deleteAccount: () => Promise<void>;
@@ -64,10 +64,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  register: async (email, password) => {
+  register: async (email, password, honeypot, formRenderedAt) => {
     set({ error: null });
     try {
-      await authApi.register(email, password);
+      await authApi.register(email, password, honeypot, formRenderedAt);
       await authApi.login(email, password);
       await enterAccountMode();
       set({ status: 'authenticated', user: { email }, error: null });

@@ -10,6 +10,7 @@ import { PhotoThumbStrip } from './components/PhotoThumbStrip';
 import { FullSizeViewer } from './components/FullSizeViewer';
 import { FilterBar } from './components/FilterBar';
 import { UnlocatedPhotosPanel } from './components/UnlocatedPhotosPanel';
+import { CountriesPanel } from './components/CountriesPanel';
 import { usePhotoStore } from './state/photoStore';
 import { useAuthStore } from './state/authStore';
 import { photosInRange, photosWithUnknownDate } from './lib/timeline';
@@ -51,12 +52,17 @@ function App() {
       <AccountNotice />
       <FilterBar photos={allPhotos} filters={searchFilters} onChange={setSearchFilters} />
       <main className="app__main">
-        <UploadControl>
-          <MapView />
+        <div className="app__map-region">
+          <UploadControl>
+            <MapView />
+          </UploadControl>
+        </div>
+        <aside className="app__side-region" aria-label="Status and photo panels">
           <StatusPanel />
-        </UploadControl>
+          <UnlocatedPhotosPanel />
+          <CountriesPanel photos={allPhotos} />
+        </aside>
       </main>
-      <UnlocatedPhotosPanel />
       {dateFilter && (
         <section className="app__filtered-strip" aria-label="Photos in selected time range">
           <PhotoThumbStrip photos={filteredPhotos} />

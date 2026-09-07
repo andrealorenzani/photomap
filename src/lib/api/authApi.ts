@@ -5,8 +5,22 @@ export interface ApiUser {
   email: string;
 }
 
-export function register(email: string, password: string): Promise<ApiUser> {
-  return apiRequest<ApiUser>('/register', { method: 'POST', json: { email, password } });
+/**
+ * `honeypot`/`formRenderedAt` feed the backend's registration anti-spam checks (a hidden
+ * off-screen form field a bot would fill in, and a minimum elapsed-time-since-form-render
+ * check) -- see TopBanner.tsx for how they're captured, and backend/src/Controllers/
+ * AuthController.php's register() for how they're validated.
+ */
+export function register(
+  email: string,
+  password: string,
+  honeypot: string,
+  formRenderedAt: number
+): Promise<ApiUser> {
+  return apiRequest<ApiUser>('/register', {
+    method: 'POST',
+    json: { email, password, website: honeypot, formRenderedAt },
+  });
 }
 
 export function login(email: string, password: string): Promise<ApiUser> {

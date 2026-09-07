@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
-    "release": "bash backend/scripts/package-for-deploy.sh"
+    "release": "bash backend/scripts/package-for-deploy.sh",
+    "deploy": "bash backend/scripts/deploy.sh"
   },
   "dependencies": {
     "exifr": "^7.1.3",

@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Photomap\Backend\Services;
 
 /**
- * Thin wrapper over PHP's built-in mail(), not an SMTP library — Dreamhost-style shared
- * hosting (this project's own named first-class deploy target) reliably supports mail() with
+ * Thin wrapper over PHP's built-in mail(), not an SMTP library — typical Apache/PHP shared
+ * hosting (this project's first-class deploy target) reliably supports mail() with
  * zero extra configuration, while outbound SMTP on arbitrary ports is commonly blocked or
  * requires per-account allowlisting on such hosts. Known, accepted limitation: weaker
  * deliverability (spam-folder risk, no DKIM/SPF/retry control) — acceptable given the low

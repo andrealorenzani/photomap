@@ -52,7 +52,7 @@ abstract class FeatureTestCase extends TestCase
     protected function resetDatabase(): void
     {
         $this->pdo->exec('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['photos', 'share_links', 'users', 'geocode_cache', 'login_attempts'] as $table) {
+        foreach (['photos', 'share_links', 'users', 'geocode_cache', 'login_attempts', 'registration_attempts'] as $table) {
             $this->pdo->exec("TRUNCATE TABLE {$table}");
         }
         $this->pdo->exec('UPDATE nominatim_rate_limit SET last_request_at = NULL WHERE id = 1');

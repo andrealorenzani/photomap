@@ -6,7 +6,9 @@ namespace Photomap\Backend\Controllers;
 
 use Photomap\Backend\Http\JsonResponse;
 use Photomap\Backend\Http\Request;
+use Photomap\Backend\Repositories\RegistrationAttemptRepository;
 use Photomap\Backend\Repositories\UserRepository;
+use Photomap\Backend\Services\DisposableEmailDomainList;
 use Photomap\Backend\Services\MailerInterface;
 use Photomap\Backend\Services\RateLimiter;
 use Photomap\Backend\Session;
@@ -21,7 +23,12 @@ final class AuthController
         private readonly UserRepository $users,
         private readonly RateLimiter $rateLimiter,
         private readonly MailerInterface $mailer,
-        private readonly ?string $adminNotifyEmail = null
+        private readonly RegistrationAttemptRepository $registrationAttempts,
+        private readonly DisposableEmailDomainList $disposableEmailDomains,
+        private readonly ?string $adminNotifyEmail = null,
+        private readonly int $registrationRateLimitMaxAttempts = 5,
+        private readonly int $registrationRateLimitWindowSeconds = 3600,
+        private readonly int $registrationMinFormSeconds = 2
     ) {
     }
 
@@ -35,6 +42,53 @@ final class AuthController
         $body = $request->json();
         $email = is_string($body['email'] ?? null) ? trim($body['email']) : '';
         $password = is_string($body['password'] ?? null) ? $body['password'] : '';
+        // Honeypot: a hidden, off-screen (not display:none) form field. Real users/screen
+        // readers/keyboard navigation never fill it in; bots that blindly fill every field do.
+        $honeypot = is_string($body['website'] ?? null) ? trim($body['website']) : '';
+        // Epoch ms captured client-side when the registration form first mounts/switches into
+        // register mode -- used for the timing check below.
+        $formRenderedAt = is_numeric($body['formRenderedAt'] ?? null) ? (int) $body['formRenderedAt'] : null;
+        $ip = $request->ip();
+
+        // Every registration POST is recorded regardless of outcome, mirroring login_attempts'
+        // "record everything" pattern -- this happens before the rate-limit check below so a
+        // bot retrying past the honeypot/timing checks still counts toward the throttle. The
+        // count used for *this* request's own threshold decision is read first, so it reflects
+        // only attempts strictly before this one (no off-by-one from counting itself).
+        $recentAttemptsFromThisIp = $this->registrationAttempts->countRecentByIp(
+            $ip,
+            $this->registrationRateLimitWindowSeconds
+        );
+        $this->registrationAttempts->record($ip);
+
+        if ($honeypot !== '') {
+            error_log("AuthController::register: honeypot field filled in from IP {$ip}; rejecting as bot.");
+
+            return JsonResponse::error('bot_detected', 'Registration could not be completed.', 422);
+        }
+
+        if ($this->registrationMinFormSeconds > 0) {
+            $elapsedMs = $formRenderedAt !== null ? (self::nowMillis() - $formRenderedAt) : null;
+            if ($elapsedMs === null || $elapsedMs < $this->registrationMinFormSeconds * 1000) {
+                return JsonResponse::error('bot_detected', 'Registration could not be completed.', 422);
+            }
+        }
+
+        if ($recentAttemptsFromThisIp >= $this->registrationRateLimitMaxAttempts) {
+            return JsonResponse::error(
+                'too_many_attempts',
+                'Too many registration attempts from this network. Please try again later.',
+                429
+            );
+        }
+
+        if ($email !== '' && $this->disposableEmailDomains->isDisposable($email)) {
+            return JsonResponse::error(
+                'disposable_email',
+                'Please use a permanent (non-disposable) email address to register.',
+                422
+            );
+        }
 
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return JsonResponse::error('invalid_email', 'A valid email address is required.', 422);
@@ -140,5 +194,10 @@ final class AuthController
         }
 
         return new JsonResponse(['id' => (int) $user['id'], 'email' => $user['email'], 'status' => $user['status']]);
+    }
+
+    private static function nowMillis(): int
+    {
+        return (int) round(microtime(true) * 1000);
     }
 }

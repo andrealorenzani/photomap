@@ -2,16 +2,16 @@
 #
 # This file only matters at all if this directory (or a copy of it) ends up reachable by a web
 # server despite the intended deploy layout keeping it outside any domain's mapped docroot (see
-# the "Deploying to Dreamhost" section of the README). The specific risk this guards against:
-# many shared hosts (Dreamhost included, depending on account settings) enable mod_userdir,
-# which serves a user's home directory -- and anything under it not otherwise domain-mapped,
-# including a sibling directory like ~/photomap-backend/ -- at
-# http://<server-hostname-or-ip>/~<username>/... regardless of what any domain's own .htaccess
-# says. That is a different exposure path than directory traversal from within a domain's
-# docroot, so it needs its own, independent mitigation: this file.
+# the "Deploying to a shared host" section of the README). The specific risk this guards against:
+# many shared hosts enable mod_userdir (depending on account settings), which serves a user's
+# home directory -- and anything under it not otherwise domain-mapped, including a sibling
+# directory like ~/photomap-backend/ -- at http://<server-hostname-or-ip>/~<username>/...
+# regardless of what any domain's own .htaccess says. That is a different exposure path than
+# directory traversal from within a domain's docroot, so it needs its own, independent
+# mitigation: this file.
 #
 # The only intended web entry point into this directory is the one-line stub at
-# domain.com/api/index.php (see deploy/dreamhost/api/index.php), which requires
+# domain.com/api/index.php (see deploy/shared-hosting/api/index.php), which requires
 # public/index.php directly from PHP -- that require() is unaffected by this Apache-level rule,
 # since it never goes through the web server at all.
 

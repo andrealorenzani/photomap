@@ -11,6 +11,31 @@
   display: flex;
 }
 
+/* The map takes up the large majority of the viewport width; the side region holds every
+   panel that used to float over the map as an absolute overlay (StatusPanel,
+   UnlocatedPhotosPanel, CountriesPanel), living in normal document flow instead. This is what
+   fixes the StatusPanel/MapStyleToggle overlap bug architecturally: StatusPanel is no longer
+   positioned over the map at all. MapStyleToggle (a genuinely map-native control, same
+   convention as Leaflet's own zoom buttons) and the folder-select button remain the only two
+   on-map overlays, in opposite corners. */
+.app__map-region {
+  flex: 3;
+  min-width: 0;
+  display: flex;
+  position: relative;
+}
+
+.app__side-region {
+  flex: 0 0 300px;
+  max-width: 300px;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-left: 1px solid #ddd;
+  background: #fafafa;
+}
+
 .app__filtered-strip {
   border-top: 1px solid #ddd;
   background: #fff;

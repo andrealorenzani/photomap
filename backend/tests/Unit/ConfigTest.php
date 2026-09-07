@@ -9,7 +9,7 @@ use Photomap\Backend\Config;
 use Photomap\Backend\Database;
 
 /**
- * Covers Config::load()'s config.php-vs-.env precedence logic (the shared-hosting/Dreamhost
+ * Covers Config::load()'s config.php-vs-.env precedence logic (the shared-hosting
  * deploy path adds config.php as an alternate, higher-priority settings source -- see
  * docs/plans.md). Each test builds its own scratch "root" directory with some combination of
  * config.php/.env present, so these scenarios don't depend on this repo's real backend/ root

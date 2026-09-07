@@ -2,7 +2,8 @@
 
 // One-line stub: the only thing making /api/* web-reachable on the domain's docroot. Everything
 // else the backend needs (vendor/, src/, config.php, storage/) lives one level outside the
-// docroot, in a private sibling directory -- see the README's "Deploying to Dreamhost" section.
+// docroot, in a private sibling directory -- see the README's "Deploying to a shared host"
+// section.
 //
 // PHP's __DIR__ inside the *required* file (backend's public/index.php) is computed from that
 // file's own real path, regardless of who require()s it -- so dirname(__DIR__) there still

@@ -136,7 +136,17 @@ export function MapView({ photos: photosProp, readOnly = false }: MapViewProps) 
   // map's maxZoom before that later effect has run.
   useEffect(() => {
     if (!mapRef.current || leafletMapRef.current) return;
-    const map = L.map(mapRef.current, { maxZoom: 19 }).setView([20, 0], 2);
+    // minZoom/maxBounds/maxBoundsViscosity prevent the standard Leaflet low-zoom behavior of
+    // repeating the world horizontally when zoomed out past a single world-width -- with no
+    // minZoom/maxBounds set, zooming out further than that shows duplicate copies of the map
+    // side by side. maxBoundsViscosity: 1.0 makes the bounds "solid" (no rubber-banding past
+    // the edge) rather than just resistant.
+    const map = L.map(mapRef.current, {
+      maxZoom: 19,
+      minZoom: 2,
+      maxBounds: L.latLngBounds([-90, -180], [90, 180]),
+      maxBoundsViscosity: 1.0,
+    }).setView([20, 0], 2);
     const clusterGroup = L.markerClusterGroup();
     map.addLayer(clusterGroup);
 
@@ -165,6 +175,9 @@ export function MapView({ photos: photosProp, readOnly = false }: MapViewProps) 
     const tileLayer = L.tileLayer(styleConfig.tileUrl, {
       attribution: styleConfig.attribution,
       maxZoom: styleConfig.maxZoom,
+      // Paired with the map's own minZoom/maxBounds above: without noWrap, Leaflet still tiles
+      // additional world copies horizontally at low zoom even with maxBounds set.
+      noWrap: true,
     });
     tileLayer.addTo(map);
     tileLayer.bringToBack();

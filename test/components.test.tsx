@@ -366,3 +366,70 @@ describe('TopBanner registration notice (gates account creation on acknowledgmen
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('TopBanner registration anti-spam fields (honeypot + formRenderedAt)', () => {
+  beforeEach(async () => {
+    await resetAuthAndRepoState();
+  });
+
+  afterEach(async () => {
+    cleanup();
+    vi.restoreAllMocks();
+    await resetAuthAndRepoState();
+  });
+
+  function switchToRegisterMode() {
+    fireEvent.click(screen.getByRole('button', { name: /need an account\? register/i }));
+  }
+
+  it('renders the honeypot field genuinely inaccessible to keyboard/assistive-tech users', () => {
+    render(<TopBanner />);
+    switchToRegisterMode();
+
+    const honeypot = document.querySelector('input[name="website"]') as HTMLInputElement;
+    expect(honeypot).toBeInTheDocument();
+    // Never display:none/visibility:hidden (a bot special-casing those would just skip it) --
+    // it's still "visible" in the DOM sense, just positioned off-screen via CSS.
+    expect(honeypot).toBeVisible();
+    expect(honeypot).toHaveAttribute('tabindex', '-1');
+    expect(honeypot).toHaveAttribute('aria-hidden', 'true');
+    expect(honeypot).toHaveAttribute('autocomplete', 'off');
+    // Not reachable via the accessibility tree at all (aria-hidden removes it), so a screen
+    // reader user could never even discover it exists, let alone fill it in.
+    expect(screen.queryByRole('textbox', { name: /website/i })).not.toBeInTheDocument();
+  });
+
+  it('sends the honeypot value and a formRenderedAt captured once per register-mode-entry, not reset on every keystroke', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+    installFetchMock((url, init) => {
+      if (url.endsWith('/api/csrf-token')) return jsonResponse({ csrfToken: 'tok' });
+      if (url.endsWith('/api/register') && init?.method === 'POST') {
+        capturedBody = JSON.parse(String(init.body));
+        return jsonResponse({ id: 1, email: 'new@example.com' });
+      }
+      if (url.endsWith('/api/login') && init?.method === 'POST') {
+        return jsonResponse({ id: 1, email: 'new@example.com' });
+      }
+      if (url.endsWith('/api/photos')) return jsonResponse({ photos: [] });
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    render(<TopBanner />);
+    switchToRegisterMode();
+    const renderedAt = Date.now();
+
+    fireEvent.change(screen.getByPlaceholderText('Email'), { target: { value: 'new@example.com' } });
+    // Simulate several keystrokes -- formRenderedAt must not move on any of these.
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'p' } });
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'pa' } });
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: /^register$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /i understand, create my account/i }));
+
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    expect(capturedBody!.website).toBe('');
+    expect(typeof capturedBody!.formRenderedAt).toBe('number');
+    expect(capturedBody!.formRenderedAt as number).toBeGreaterThanOrEqual(renderedAt - 50);
+    expect(capturedBody!.formRenderedAt as number).toBeLessThanOrEqual(Date.now());
+  });
+});

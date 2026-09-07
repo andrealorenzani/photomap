@@ -5,9 +5,8 @@ declare(strict_types=1);
 // Copy this file to config.php (same directory) and fill in real values, then delete/ignore
 // .env — Config::load() checks for config.php first and, if present, uses it exclusively
 // (falling back to .env only when config.php doesn't exist). This is the recommended path for
-// shared hosting (e.g. Dreamhost) where hand-editing one PHP file over SFTP is easier than
-// managing a .env file, but it works identically anywhere Config::load() is used — it is not
-// Dreamhost-specific.
+// shared hosting where hand-editing one PHP file over SFTP is easier than managing a .env file,
+// but it works identically anywhere Config::load() is used — it is not tied to any specific host.
 //
 // This file is executed by PHP (require), not parsed as plain text/JSON, so even if it is ever
 // briefly reachable over the web by mistake, a request would execute it (producing no output,
@@ -20,9 +19,9 @@ declare(strict_types=1);
 // settings, just as a PHP array instead of a KEY=value text format.
 return [
     // --- Database ---
-    // On Dreamhost, DB_HOST is a hostname the control panel gives you (NOT 127.0.0.1/localhost)
-    // -- typically something like "mysql.yourdomain.com". DB_NAME/DB_USER/DB_PASSWORD are the
-    // database, user, and password you create in the Dreamhost panel's MySQL section.
+    // On most shared hosts, DB_HOST is a hostname your host's control panel gives you (NOT
+    // 127.0.0.1/localhost) -- typically something like "mysql.yourdomain.com". DB_NAME/DB_USER/
+    // DB_PASSWORD are the database, user, and password you create in your host's MySQL section.
     'DB_HOST' => 'mysql.yourdomain.com',
     'DB_PORT' => '3306',
     'DB_NAME' => 'photomap',
@@ -30,17 +29,18 @@ return [
     'DB_PASSWORD' => 'change-me',
 
     // --- App ---
-    // Leave at "development" until your domain's HTTPS (Let's Encrypt, via the Dreamhost panel)
-    // is confirmed working. Setting "production" before HTTPS is enabled makes the session
-    // cookie's Secure flag get sent, which browsers silently refuse to store over plain HTTP --
-    // login will appear to succeed but the session will not persist, with no visible error. See
-    // the README's "Deploying to Dreamhost" troubleshooting note before flipping this.
+    // Leave at "development" until your domain's HTTPS (e.g. a Let's Encrypt certificate, set up
+    // via your host's panel) is confirmed working. Setting "production" before HTTPS is enabled
+    // makes the session cookie's Secure flag get sent, which browsers silently refuse to store
+    // over plain HTTP -- login will appear to succeed but the session will not persist, with no
+    // visible error. See the README's "Deploying to a shared host" troubleshooting note before
+    // flipping this.
     'APP_ENV' => 'production',
     // Generate with: php -r 'echo bin2hex(random_bytes(32));'
     'APP_SECRET' => 'change_me_to_a_random_32_byte_hex_string',
 
-    // Absolute path, outside any web-reachable directory. In the recommended two-tier Dreamhost
-    // layout, this is a sibling of the domain's docroot under your account home, e.g.
+    // Absolute path, outside any web-reachable directory. In the recommended two-tier shared-
+    // hosting layout, this is a sibling of the domain's docroot under your account home, e.g.
     // /home/youruser/photomap-backend/storage -- never under /home/youruser/yourdomain.com/.
     'STORAGE_PATH' => '/home/youruser/photomap-backend/storage',
 
@@ -49,7 +49,7 @@ return [
     // Per-account storage quota is no longer set here -- it's admin-configurable at runtime
     // (default quota for new users + a global upload kill-switch) from the /admin console's
     // Settings panel, backed by the `app_settings` table. The 0008 migration seeds a 100MB
-    // default; sanity-check that against your Dreamhost plan's disk quota if you expect many
+    // default; sanity-check that against your hosting plan's disk quota if you expect many
     // accounts, and change it from the admin UI, not here.
 
     // --- Nominatim (must include real contact info per Nominatim's usage policy) ---
@@ -62,21 +62,31 @@ return [
     'RATE_LIMIT_LOGIN_MAX_ATTEMPTS' => '5',
     'RATE_LIMIT_LOGIN_WINDOW_SECONDS' => '900',
 
+    // --- Registration rate limiting / anti-spam ---
+    // Per-IP registration throttle (separate from the login throttle above -- every POST
+    // /api/register counts against this window, not just failures).
+    'RATE_LIMIT_REGISTRATION_MAX_ATTEMPTS' => '5',
+    'RATE_LIMIT_REGISTRATION_WINDOW_SECONDS' => '3600',
+    // Minimum number of seconds that must elapse between the registration form rendering
+    // client-side and the submission reaching the server, used as a simple bot-timing check.
+    // Set to 0 to disable the check entirely.
+    'REGISTRATION_MIN_FORM_SECONDS' => '2',
+
     // --- Global Nominatim spacing (seconds between requests) ---
     'NOMINATIM_MIN_INTERVAL_SECONDS' => '1',
 
     // --- CORS / cookies ---
-    // A Dreamhost two-tier deploy (frontend + /api/ under the same domain via .htaccess routing)
-    // is same-origin by construction -- leave both of these at their simple same-origin
+    // A shared-hosting two-tier deploy (frontend + /api/ under the same domain via .htaccess
+    // routing) is same-origin by construction -- leave both of these at their simple same-origin
     // defaults. Only fill these in for a genuinely split-origin deployment (frontend and backend
-    // on two different domains), which the Dreamhost deploy path in the README does not need.
+    // on two different domains), which the shared-hosting deploy path in the README does not need.
     'CORS_ALLOWED_ORIGINS' => '',
     'SESSION_COOKIE_SAMESITE' => 'Lax',
 
     // --- Admin console (/admin) ---
     // A single hardcoded admin username/password pair for v1.0.0 (no multi-admin support this
     // release). Pick a unique username (not "admin"). Generate the password hash by running,
-    // on any machine with the PHP CLI (including over SSH on Dreamhost itself):
+    // on any machine with the PHP CLI (including over SSH on your host itself, if available):
     //   php -r 'echo password_hash("your-chosen-password", PASSWORD_DEFAULT), PHP_EOL;'
     // Paste the printed $2y$... bcrypt hash below and discard the plaintext password -- it
     // cannot be recovered from the hash. To rotate the password later, repeat this with a new
@@ -91,9 +101,10 @@ return [
     'ADMIN_NOTIFY_EMAIL' => '',
 
     // --- Mail (activation/deactivation/new-registration notifications) ---
-    // Sent via PHP's built-in mail(), which Dreamhost supports with zero extra configuration
-    // (unlike outbound SMTP, which is commonly blocked on shared hosting) -- best-effort only,
-    // failures are logged via error_log() and never block the triggering user-facing action.
+    // Sent via PHP's built-in mail(), which most shared hosts support with zero extra
+    // configuration (unlike outbound SMTP, which is commonly blocked on shared hosting) --
+    // best-effort only, failures are logged via error_log() and never block the triggering
+    // user-facing action.
     'MAIL_FROM_ADDRESS' => 'no-reply@yourdomain.com',
     'MAIL_FROM_NAME' => 'Photomap',
 ];

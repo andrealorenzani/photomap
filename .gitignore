@@ -5,6 +5,10 @@ release
 *.local
 tsconfig.tsbuildinfo
 
+# Real deploy-automation credentials (SSH host/user/key path) -- never committed. See
+# deploy.config.example.json for the template.
+/deploy.config.json
+
 # Coordinator pipeline's transient crash/session-limit resumability state (not project history —
 # see docs/plans.md for the permanent record of finished changes).
 .claude/state/

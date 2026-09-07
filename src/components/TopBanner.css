@@ -27,6 +27,19 @@
   font-size: 0.85rem;
 }
 
+/* Honeypot anti-spam field: genuinely off-screen (not display:none/visibility:hidden, which
+   some bots special-case and skip when deciding which fields to fill in), but with zero visual
+   footprint and unreachable via Tab (tabIndex=-1) or assistive tech (aria-hidden) for real
+   users. */
+.top-banner__honeypot {
+  position: absolute;
+  left: -9999px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
 .top-banner__mode-switch {
   background: none;
   border: none;

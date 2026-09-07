@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
-# Assembles a ready-to-upload two-tier directory tree for a shared-hosting deploy (Dreamhost is
-# the worked example in the README, but nothing here is Dreamhost-specific -- this works for any
-# Apache + PHP + MySQL shared host with SFTP/SSH access).
+# Assembles a ready-to-upload two-tier directory tree for a shared-hosting deploy -- this works
+# for any Apache + PHP + MySQL shared host with SFTP/SSH access.
 #
 # Produces, at the repo root:
 #
@@ -35,7 +34,7 @@ log "Building frontend (npm run build)"
 
 log "Installing backend production dependencies (composer install --no-dev --optimize-autoloader)"
 if command -v composer >/dev/null 2>&1; then
-  # --ignore-platform-reqs: this packages vendor/ to ship to the target Dreamhost host, never to
+  # --ignore-platform-reqs: this packages vendor/ to ship to the target shared host, never to
   # run locally with this machine's own PHP -- so the machine running this script (a dev laptop,
   # CI runner, etc.) isn't required to have the runtime extensions (pdo_mysql/gd/curl/exif/etc)
   # that only the target host needs. Same rationale as the Docker fallback below.
@@ -62,7 +61,7 @@ Fix by installing ONE of the following, then re-run this script:
   - Docker (used here as a fallback to run Composer without installing it natively):
     https://docs.docker.com/get-docker/
 
-See backend/README.md's "Deploying to Dreamhost" section for the full deploy walkthrough.
+See backend/README.md's "Deploying to a shared host" section for the full deploy walkthrough.
 EOF
   exit 1
 fi
@@ -78,8 +77,8 @@ if [ ! -d "${REPO_ROOT}/dist" ]; then
   exit 1
 fi
 cp -a "${REPO_ROOT}/dist/." "${RELEASE_DIR}/domain.com/"
-cp "${REPO_ROOT}/deploy/dreamhost/.htaccess" "${RELEASE_DIR}/domain.com/.htaccess"
-cp "${REPO_ROOT}/deploy/dreamhost/api/index.php" "${RELEASE_DIR}/domain.com/api/index.php"
+cp "${REPO_ROOT}/deploy/shared-hosting/.htaccess" "${RELEASE_DIR}/domain.com/.htaccess"
+cp "${REPO_ROOT}/deploy/shared-hosting/api/index.php" "${RELEASE_DIR}/domain.com/api/index.php"
 
 log "Staging backend (curated copy -> release/photomap-backend/)"
 # Curated copy, NOT a raw recursive copy of backend/: this directory's non-web-reachability is
@@ -116,4 +115,4 @@ fi
 
 log "Done. Upload release/photomap-backend/ to a private directory outside your domain's docroot,"
 log "and the *contents* of release/domain.com/ to your domain's docroot. See the README's"
-log "'Deploying to Dreamhost' section for the full walkthrough."
+log "'Deploying to a shared host' section for the full walkthrough."

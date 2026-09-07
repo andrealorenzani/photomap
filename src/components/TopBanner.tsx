@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useAuthStore } from '../state/authStore';
 import { createShareLink } from '../lib/api/shareLinksApi';
 import { RegistrationNoticeModal } from './RegistrationNoticeModal';
@@ -8,12 +8,25 @@ function LoggedOutForm() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Honeypot: a hidden, off-screen (not display:none) field. Real users/screen readers/
+  // keyboard navigation never fill it in; bots that blindly fill every field on the page do.
+  const [honeypot, setHoneypot] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showRegistrationNotice, setShowRegistrationNotice] = useState(false);
   const login = useAuthStore((s) => s.login);
   const register = useAuthStore((s) => s.register);
   const error = useAuthStore((s) => s.error);
   const clearError = useAuthStore((s) => s.clearError);
+
+  // Captured once, the first time the form switches into register mode -- not reset on every
+  // keystroke -- so the backend's timing check measures genuine form-to-submission elapsed
+  // time, not anything keystroke-related.
+  const formRenderedAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (mode === 'register' && formRenderedAtRef.current === null) {
+      formRenderedAtRef.current = Date.now();
+    }
+  }, [mode]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -36,7 +49,7 @@ function LoggedOutForm() {
   async function handleAcknowledgeRegistration() {
     setSubmitting(true);
     try {
-      await register(email, password);
+      await register(email, password, honeypot, formRenderedAtRef.current ?? Date.now());
       setShowRegistrationNotice(false);
     } catch {
       // Error message is already surfaced via authStore's `error` state; keep the modal open
@@ -64,6 +77,20 @@ function LoggedOutForm() {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         required
+      />
+      {/* Honeypot: genuinely off-screen (not display:none, which some bots special-case and
+          skip) via TopBanner.css's .top-banner__honeypot -- aria-hidden + tabIndex=-1 +
+          autoComplete=off keep it unreachable to keyboard/assistive-tech users, so no
+          legitimate user can ever trigger it. */}
+      <input
+        type="text"
+        name="website"
+        className="top-banner__honeypot"
+        tabIndex={-1}
+        autoComplete="off"
+        aria-hidden="true"
+        value={honeypot}
+        onChange={(e) => setHoneypot(e.target.value)}
       />
       <button type="submit" disabled={submitting}>
         {mode === 'login' ? 'Log in' : 'Register'}

@@ -82,6 +82,31 @@ describe('authStore mode switching', () => {
     await useAuthStore.getState().restoreSession();
     expect(useAuthStore.getState().status).toBe('guest');
   });
+
+  it('register() forwards honeypot/formRenderedAt through to POST /api/register unchanged', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/csrf-token')) return Promise.resolve(jsonResponse({ csrfToken: 'tok' }));
+      if (url.endsWith('/api/register')) {
+        capturedBody = JSON.parse(String(init?.body));
+        return Promise.resolve(jsonResponse({ id: 1, email: 'new@example.com' }));
+      }
+      if (url.endsWith('/api/login')) return Promise.resolve(jsonResponse({ id: 1, email: 'new@example.com' }));
+      if (url.endsWith('/api/photos')) return Promise.resolve(jsonResponse({ photos: [] }));
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const formRenderedAt = Date.now() - 5000;
+    await useAuthStore.getState().register('new@example.com', 'password123', 'filled-by-bot', formRenderedAt);
+
+    expect(capturedBody).toEqual({
+      email: 'new@example.com',
+      password: 'password123',
+      website: 'filled-by-bot',
+      formRenderedAt,
+    });
+  });
 });
 
 describe('reconcileId store action', () => {

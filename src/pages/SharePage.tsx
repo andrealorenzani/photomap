@@ -7,6 +7,7 @@ import { TimelineStrip } from '../components/TimelineStrip';
 import { PhotoThumbStrip } from '../components/PhotoThumbStrip';
 import { FullSizeViewer } from '../components/FullSizeViewer';
 import { FilterBar } from '../components/FilterBar';
+import { CountriesPanel } from '../components/CountriesPanel';
 import { applyFilters, type SearchFilters } from '../lib/filters';
 import { photosInRange, photosWithUnknownDate } from '../lib/timeline';
 import { usePhotoStore, type DateRange } from '../state/photoStore';
@@ -93,6 +94,7 @@ export function SharePage({ token }: SharePageProps) {
       <main className="share-page__main">
         <MapView photos={timelineFiltered} readOnly />
       </main>
+      <CountriesPanel photos={photos} />
       <TimelineStrip photos={searchFiltered} dateFilter={dateRange} onDateFilterChange={setDateRange} />
       <PhotoThumbStrip photos={timelineFiltered} readOnly />
       <FullSizeViewer photos={timelineFiltered} readOnly />

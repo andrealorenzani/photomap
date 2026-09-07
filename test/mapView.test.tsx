@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import L from 'leaflet';
 import { MapView } from '../src/components/MapView';
 import { usePhotoStore } from '../src/state/photoStore';
 import type { PhotoRecord } from '../src/types';
@@ -69,5 +70,40 @@ describe('MapView style toggle', () => {
     render(<MapView readOnly photos={[photo('p1', { hasGPS: true, lat: 1, lon: 1 })]} />);
     expect(screen.getByTestId('map-container')).toBeInTheDocument();
     expect(screen.getByTestId('map-style-toggle')).toBeInTheDocument();
+  });
+});
+
+describe('MapView world-repeat prevention (minZoom/maxBounds/noWrap)', () => {
+  beforeEach(() => {
+    resetStore();
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it('creates the Leaflet map with minZoom, world maxBounds, and maxBoundsViscosity: 1.0', () => {
+    const mapSpy = vi.spyOn(L, 'map');
+    render(<MapView />);
+
+    expect(mapSpy).toHaveBeenCalledTimes(1);
+    const [, options] = mapSpy.mock.calls[0];
+    expect(options).toMatchObject({ minZoom: 2, maxBoundsViscosity: 1.0 });
+    expect(options?.maxBounds).toBeInstanceOf(L.LatLngBounds);
+    const bounds = options?.maxBounds as L.LatLngBounds;
+    expect(bounds.getSouthWest()).toMatchObject({ lat: -90, lng: -180 });
+    expect(bounds.getNorthEast()).toMatchObject({ lat: 90, lng: 180 });
+  });
+
+  it('creates the tile layer with noWrap: true', () => {
+    const tileLayerSpy = vi.spyOn(L, 'tileLayer');
+    render(<MapView />);
+
+    expect(tileLayerSpy).toHaveBeenCalled();
+    const [, options] = tileLayerSpy.mock.calls[0];
+    expect(options).toMatchObject({ noWrap: true });
   });
 });

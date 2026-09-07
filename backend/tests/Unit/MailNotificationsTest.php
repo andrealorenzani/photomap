@@ -9,8 +9,10 @@ use Photomap\Backend\Controllers\AuthController;
 use Photomap\Backend\Http\Request;
 use Photomap\Backend\Repositories\LoginAttemptRepository;
 use Photomap\Backend\Repositories\PhotoRepository;
+use Photomap\Backend\Repositories\RegistrationAttemptRepository;
 use Photomap\Backend\Repositories\ShareLinkRepository;
 use Photomap\Backend\Repositories\UserRepository;
+use Photomap\Backend\Services\DisposableEmailDomainList;
 use Photomap\Backend\Services\RateLimiter;
 use Photomap\Backend\Tests\Support\DatabaseTestCase;
 use Photomap\Backend\Tests\Support\FailingFakeMailer;
@@ -31,12 +33,33 @@ final class MailNotificationsTest extends DatabaseTestCase
         return $request;
     }
 
+    /**
+     * Same as jsonRequest(), but merges in a `formRenderedAt` far enough in the past to always
+     * clear the registration timing check -- this class tests mail-notification side effects
+     * of register(), not the anti-spam checks themselves (see RegistrationHardeningFeatureTest
+     * for those), so every register() call here needs to look like a legitimate, un-hurried
+     * submission.
+     */
+    private function registerRequest(array $body, array $routeParams = []): Request
+    {
+        $body['formRenderedAt'] ??= self::nowMillis() - 10_000;
+
+        return $this->jsonRequest($body, $routeParams);
+    }
+
+    private static function nowMillis(): int
+    {
+        return (int) round(microtime(true) * 1000);
+    }
+
     private function authController(FakeMailer|FailingFakeMailer $mailer, ?string $adminNotifyEmail = 'admin@example.com'): AuthController
     {
         $users = new UserRepository($this->pdo);
         $rateLimiter = new RateLimiter(new LoginAttemptRepository($this->pdo), 5, 900);
+        $registrationAttempts = new RegistrationAttemptRepository($this->pdo);
+        $disposableEmailDomains = new DisposableEmailDomainList();
 
-        return new AuthController($users, $rateLimiter, $mailer, $adminNotifyEmail);
+        return new AuthController($users, $rateLimiter, $mailer, $registrationAttempts, $disposableEmailDomains, $adminNotifyEmail);
     }
 
     private function adminUsersController(FakeMailer|FailingFakeMailer $mailer): AdminUsersController
@@ -54,7 +77,7 @@ final class MailNotificationsTest extends DatabaseTestCase
         $mailer = new FakeMailer();
         $controller = $this->authController($mailer);
 
-        $controller->register($this->jsonRequest(['email' => 'newperson@example.com', 'password' => 'password123']));
+        $controller->register($this->registerRequest(['email' => 'newperson@example.com', 'password' => 'password123']));
 
         $this->assertCount(1, $mailer->sent);
         $this->assertSame('admin@example.com', $mailer->sent[0]['to']);
@@ -66,8 +89,8 @@ final class MailNotificationsTest extends DatabaseTestCase
         $mailer = new FakeMailer();
         $controller = $this->authController($mailer);
 
-        $controller->register($this->jsonRequest(['email' => 'not-an-email', 'password' => 'password123']));
-        $controller->register($this->jsonRequest(['email' => 'short@example.com', 'password' => 'short']));
+        $controller->register($this->registerRequest(['email' => 'not-an-email', 'password' => 'password123']));
+        $controller->register($this->registerRequest(['email' => 'short@example.com', 'password' => 'short']));
 
         $this->assertCount(0, $mailer->sent);
     }
@@ -77,7 +100,7 @@ final class MailNotificationsTest extends DatabaseTestCase
         $mailer = new FakeMailer();
         $controller = $this->authController($mailer, null);
 
-        $controller->register($this->jsonRequest(['email' => 'noop@example.com', 'password' => 'password123']));
+        $controller->register($this->registerRequest(['email' => 'noop@example.com', 'password' => 'password123']));
 
         $this->assertCount(0, $mailer->sent);
         $row = $this->pdo->query("SELECT status FROM users WHERE email = 'noop@example.com'")->fetch();
@@ -89,7 +112,7 @@ final class MailNotificationsTest extends DatabaseTestCase
         $mailer = new FailingFakeMailer();
         $controller = $this->authController($mailer);
 
-        $response = $controller->register($this->jsonRequest(['email' => 'resilient@example.com', 'password' => 'password123']));
+        $response = $controller->register($this->registerRequest(['email' => 'resilient@example.com', 'password' => 'password123']));
 
         $this->assertSame(1, $mailer->attempts);
         $this->assertSame(201, $this->responseStatus($response));

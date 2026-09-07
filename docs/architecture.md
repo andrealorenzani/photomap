@@ -8,13 +8,15 @@ independently:
 - A frontend project (TypeScript + Vite + React) at the repo root, implementing both guest mode
   (Phase 1) and account mode (wired in Phase 3), a hand-rolled three-route router (`/`,
   `/share/:token`, and — new in Phase 5/v1.0.0 — `/admin`), a treasure-map basemap style,
-  filter/search, drag-to-reassign, a calendar-axis drill-down layer on the timeline, and a fully
-  separate admin console page/store.
+  filter/search, drag-to-reassign, a calendar-axis drill-down layer on the timeline, a fully
+  separate admin console page/store, and — new in Phase 6 — a map-dominant two-region layout, an
+  offline client-side countries-visited panel, and world-repeat prevention on the map.
 - A standalone backend project (PHP 8.x + MySQL) at `backend/`, implementing the accounts API
   (Phase 2), a `PATCH /api/photos/{id}` endpoint and optional CORS support (Phase 3), a
-  shared-hosting/Dreamhost deployment path (Phase 4), and — new in Phase 5/v1.0.0 — registration
-  approval status, admin-configurable storage quotas, a separate `/api/admin/*` API, GPS-required
-  account-mode uploads, and email notifications.
+  generic shared-hosting deployment path (Phase 4), registration approval status,
+  admin-configurable storage quotas, a separate `/api/admin/*` API, GPS-required account-mode
+  uploads, and email notifications (Phase 5/v1.0.0), and — new in Phase 6 — registration
+  anti-spam hardening (honeypot, timing check, per-IP rate limit, disposable-domain blocklist).
 
 They remain two independently deployable projects with no shared code — the frontend talks to
 the backend only over its JSON HTTP API (`fetch`, `credentials: 'include'`), never anything
@@ -387,7 +389,7 @@ SPA fallbacks normally behave, so this characteristic is documented rather than 
 no Node entry point, deployable to any static host or the same web root as a plain PHP backend.
 Node/npm remain build-time-only tooling, unchanged in that respect from Phase 1/2.
 
-## Phase 4 — shared-hosting (Dreamhost) deployment support
+## Phase 4 — shared-hosting deployment support
 
 Photomap's documented "static frontend + plain PHP/MySQL backend" production target had never
 actually been packaged or proven as a single combined deployment before this phase: there was no
@@ -395,17 +397,22 @@ actually been packaged or proven as a single combined deployment before this pha
 `dist/` and the backend's `backend/public/` were documented as two separate web roots assuming a
 reverse proxy the user doesn't get to control on shared hosting. This phase turns that long-stated
 intention into a concretely buildable, single-artifact deployment path, generic to any
-single-directory-per-domain Apache/PHP/MySQL shared host, with Dreamhost as the named worked
-example. It changes no user-facing feature, mode behavior, or privacy property — it is exclusively
-an operational/deployment addition, fully additive alongside the existing `.env`/Docker/native-dev
-paths, which are byte-for-byte unchanged.
+single-directory-per-domain Apache/PHP/MySQL shared host. It changes no user-facing feature, mode
+behavior, or privacy property — it is exclusively an operational/deployment addition, fully
+additive alongside the existing `.env`/Docker/native-dev paths, which are byte-for-byte unchanged.
+
+*(Naming note, added in Phase 6: the `deploy/dreamhost/` directory this phase originally created
+was renamed to `deploy/shared-hosting/` in Phase 6's de-branding pass, since the mechanism
+documented below was always host-agnostic — the directory name and doc prose just hadn't caught
+up yet. The layout diagram and prose below reflect the current `deploy/shared-hosting/` name and
+generic wording; this is the same mechanism, unchanged in substance.)
 
 ### Chosen layout: two-tier deploy, backend kept fully outside the web-reachable tree
 
 A merged single-webroot shape (backend files, including `vendor/`, physically inside the
 web-reachable directory, protected only by `.htaccess` deny rules) was considered and rejected in
 favor of a two-tier, sibling-directory shape: the entire `backend/` project is uploaded to a
-private directory *outside* the Dreamhost domain's mapped docroot, with only a one-line PHP stub
+private directory *outside* the shared-hosting domain's mapped docroot, with only a one-line PHP stub
 and the frontend's static assets inside the web-reachable docroot. This extends the project's
 existing hard invariant — that photo storage must be genuinely non-web-reachable — to the entire
 backend source tree via the filesystem itself, and requires zero changes to
@@ -413,7 +420,7 @@ backend source tree via the filesystem itself, and requires zero changes to
 file's `__DIR__`, unaffected by being `require`d from elsewhere).
 
 ```
-~/                                    (Dreamhost account home — never web-served)
+~/                                    (shared-hosting account home — never web-served)
 ├── photomap-backend/                 <- upload the entire backend/ directory here, unmodified
 │   ├── .htaccess                     <- deny-all, defense in depth (mod_userdir exposure)
 │   ├── config.php                    <- the one file the user edits (DB/secret/storage settings)
@@ -421,7 +428,7 @@ file's `__DIR__`, unaffected by being `require`d from elsewhere).
 │   ├── src/, migrations/, scripts/
 │   ├── public/index.php              <- UNCHANGED, still the real front controller
 │   └── storage/{photos,thumbnails}/  <- outside the webroot, exactly as before
-└── domain.com/                       <- Dreamhost's Apache DocumentRoot for the domain
+└── domain.com/                       <- your host's Apache DocumentRoot for the domain
     ├── index.html, assets/*.js/css   <- dist/ contents, uploaded as-is
     ├── config.js                     <- dist/config.js, apiBaseUrl left at its default '/api'
     ├── .htaccess                     <- API rewrite + SPA fallback + optional HTTPS redirect
@@ -434,7 +441,7 @@ regardless of who requires it, the stub's `dirname(__DIR__)` still correctly res
 `~/photomap-backend` from inside `backend/public/index.php`. `domain.com/.htaccess` rewrites
 `/api/*` to `api/index.php` and falls back to `index.html` for any other non-file/non-directory
 path — the direct Apache equivalent of `docker/frontend/nginx.conf`'s existing `/api/` proxy_pass
-+ SPA `try_files` fallback. Because Dreamhost gives one directory per domain, this shape is
++ SPA `try_files` fallback. Because a typical shared host gives one directory per domain, this shape is
 same-origin by construction, so the existing `CORS_ALLOWED_ORIGINS`/`SESSION_COOKIE_SAMESITE=None`
 split-origin machinery is unnecessary here and defaults to the same simple same-origin settings
 already used by the Docker/dev-proxy paths.
@@ -476,10 +483,10 @@ than same-domain directory traversal. Mitigation: a deny-all `backend/.htaccess`
 curated subtrees: `release/photomap-backend/` (`public/`, `src/`, `migrations/`, `scripts/`, the
 freshly-built `vendor/`, `composer.json`/`.lock`, `config.php`/`.example`, `.htaccess`, storage
 dirs — explicitly excluding `tests/`, `docker/`, any `.env*` file, `docker-compose.yml`, and
-`phpunit.xml`) and `release/domain.com/` (the frontend's `dist/` output plus the Dreamhost
+`phpunit.xml`) and `release/domain.com/` (the frontend's `dist/` output plus the shared-hosting
 `.htaccess`/`api/index.php` stub). It includes a hardcoded-path/URL grep sweep as a warning check.
-`backend/scripts/migrate.php` works unmodified over SSH + PHP CLI against Dreamhost's MySQL/
-MariaDB (the schema was always MySQL-dialect-only, so no DB-dialect migration was needed). As a
+`backend/scripts/migrate.php` works unmodified over SSH + PHP CLI against a typical shared host's
+MySQL/MariaDB (the schema was always MySQL-dialect-only, so no DB-dialect migration was needed). As a
 fallback for accounts without SSH, concatenating `backend/migrations/*.sql` into one importable
 file for a phpMyAdmin-based first-time import is documented as an on-demand, generate-when-needed
 command, not a committed file (a committed copy would go stale).
@@ -648,6 +655,134 @@ test: `Http/JsonResponse.php`'s single shared `json_encode()` call lacked
 newly exposed by new tests using round-number coordinates, but a pre-existing contract bug
 affecting every endpoint that returns a float, not something introduced by this phase's own code.
 
+## Phase 6 — De-branding, deploy automation, layout fixes, countries-visited, and registration hardening
+
+Six independent items bundled into one release on top of v1.1.0 (process/tooling) and Phase 5
+(v1.0.0): removing a specific hosting provider's name from committed docs/scripts, adding an
+opt-in automated deploy path, fixing a real on-map panel-overlap bug and adding world-repeat
+prevention, adding an offline client-side countries-visited feature, and hardening registration
+against automated signups. None of them change guest mode's "photos never leave this device"
+guarantee, and none of them add new frontend/backend runtime coupling.
+
+### De-branding: `deploy/dreamhost/` → `deploy/shared-hosting/`
+
+Phase 4's deployment mechanism was always generic Apache/PHP/MySQL shared hosting — the
+directory name and doc prose just hadn't caught up. This phase renames the directory (`git mv`,
+preserving history) and rewords every current-state/forward-looking doc and script (READMEs,
+`config.php.example`, code comments, `docs/product.md`/`docs/code.md`) to generic
+"shared host"/"your host's panel" language. Scope explicitly excludes `docs/plans.md` and
+`docs/original_prompts.md`, which are append-only historical records of what a past change was
+actually called and did — retroactively editing them would falsify that history. This is pure
+renaming/rewording; no runtime behavior changed.
+
+### Deploy automation: opt-in, key-auth-only, with an always-available manual fallback
+
+`backend/scripts/deploy.sh` (new) wraps `package-for-deploy.sh` (reused, not duplicated) and then
+either automates the upload+migrate step over SSH or prints a concrete numbered manual checklist,
+depending on a gitignored `deploy.config.json` (template: `deploy.config.example.json`, committed).
+Automation only ever runs when `sshHost`/`sshUser`/`sshKeyPath`/`remoteBackendPath`/
+`remoteFrontendPath` are all present *and* `sshKeyPath` points to a readable private key file —
+password-based automation is deliberately never implemented, so a config with only a password
+field always falls through to the manual fallback. When a fully-configured config is found, the
+script `chmod 600`s it automatically (never left for the user to remember) before using it. No
+new language-runtime dependency: `jq` (already a documented `smoke-test.sh` dependency) parses
+the config, and `rsync`-over-SSH (falling back to `scp -r` if `rsync` isn't on `PATH`) handles
+transfer — same security properties as SFTP (SSH key auth, encrypted transport), more robust for
+repeated deploys (delta transfer). `npm run deploy` is the new root `package.json` entry point.
+
+### Frontend layout: map-dominant two-region layout, replacing floating overlay panels
+
+Confirmed in the actual CSS, not hypothetical: `StatusPanel` (`top: 0.75rem; right: 0.75rem;
+z-index: 1000`) and `MapStyleToggle` (`top: 0.6rem; right: 0.6rem; z-index: 1000`) were both
+absolutely positioned in the same top-right corner of the same `position: relative` ancestor
+(`.upload-control` → `.map-view`), with near-identical offsets and identical stacking level —
+a real, reproducible overlap, not a rare-viewport-size edge case. Fixed architecturally, not just
+cosmetically: `App.tsx`/`App.css` now use a two-region flex layout — `.app__map-region` (the map,
+`flex: 3`) and `.app__side-region` (`flex: 0 0 300px`, normal document flow, `overflow-y: auto`)
+holding `StatusPanel`, `UnlocatedPhotosPanel`, and the new `CountriesPanel`. `StatusPanel.css` lost
+its `position: absolute`/`top`/`right`/`z-index` entirely — it's a normally-flowed block now.
+`MapStyleToggle` (a genuinely map-native control, the same convention as Leaflet's own zoom
+buttons) remains the only on-map overlay in that corner; the folder-select button remains the
+other legitimate on-map overlay, in the opposite corner — no collision between the two.
+
+Separately, `MapView.tsx`'s Leaflet map instantiation gained `minZoom: 2`,
+`maxBounds: L.latLngBounds([-90,-180],[90,180])`, and `maxBoundsViscosity: 1.0`, and both
+tile-layer configs (Detailed and Treasure Map) gained `noWrap: true` — standard Leaflet behavior
+at low zoom is otherwise to repeat the world horizontally with no `minZoom`/`maxBounds`/`noWrap`
+set, which is exactly what was happening before this change. `maxZoom` and the existing
+Treasure Map zoom-cap decision (Phase 3) are untouched — this only adds world-repeat prevention,
+nothing else about the zoom range. Real-browser visual verification of "no world-copy repetition
+at low zoom" and "no panel overlap at various viewport widths" is not feasible in this
+environment and is documented as a manual follow-up item rather than silently skipped.
+
+### Countries-visited: fully offline, client-side, shared by both modes
+
+New client-derived view: for every photo with usable GPS, resolve which country it was taken in
+and which distinct month/year(s) photos exist for that country, in a collapsible
+`CountriesPanel` in the new side region (and optionally in the read-only share view).
+
+**Why not the existing `GET /api/geocode`/Nominatim path**: that path is account-mode-only
+(requires a login session), would require transmitting GPS coordinates off-device to compute a
+per-photo country — a direct violation of guest mode's "your photos never leave this device"
+guarantee, which explicitly includes GPS coordinates, not just photo bytes — and stores an
+unstructured `place_name` display string rather than a structured country field, which would
+require unreliable English-string parsing to extract a country. It's also a poor fit for a
+bulk all-photos-at-once computation against a shared 1-request/second rate limit. A bundled,
+offline, client-side country-boundary lookup is strictly better on privacy, reliability, and
+performance, and — critically — works identically in guest mode, account mode, and the share
+view, none of which need a network call or a login session to compute it.
+
+Implementation: `public/data/countries-110m.geo.json` (Natural Earth 1:110m admin-0 country
+boundaries, public domain, trimmed to just `{name, geometry}` per feature — ~250KB, 177
+countries) is fetched once and cached in-memory by `src/lib/countryLookup.ts`'s
+`loadCountryBoundaries()`. `findCountryForPoint(lat, lon)` does a hand-rolled ray-casting
+point-in-polygon test (supporting `Polygon`/`MultiPolygon` with holes), with a cheap per-country
+bounding-box pre-check before the full ray-cast. `src/lib/countries.ts`'s
+`computeCountryVisits()` reuses `computeMarkerGroups()` (the same ~50m grid-bucketing already
+used for map markers) so exactly one country lookup runs per marker group, not per photo — a
+folder import can easily contain thousands of photos at a handful of distinct locations. No new
+npm dependency; zero backend involvement; zero network calls beyond the one-time bundled-asset
+fetch.
+
+### Registration anti-spam hardening: no-dependency stack, no third-party CAPTCHA
+
+`AuthController::register()` previously had zero throttling, no honeypot, no timing check, and no
+disposable-domain check — only email-uniqueness and an 8-char password minimum, plus the CSRF
+requirement every state-changing endpoint already has. Login already had per-account/per-IP rate
+limiting (`RateLimiter`/`login_attempts`); this phase closes the equivalent gap for registration,
+mirroring that existing pattern rather than inventing a new one:
+
+- A new `registration_attempts` table (migration `0009`) and `RegistrationAttemptRepository`
+  (`countRecentByIp()`/`record()`) — a dedicated table, not a reuse of `login_attempts`, since
+  every registration POST counts against the window regardless of outcome (no "succeeded" concept
+  to filter on the way login has).
+- A new `DisposableEmailDomainList` service: a static, hardcoded, curated list of ~50 well-known
+  disposable-email domains, matched case-insensitively including subdomains. Deliberately not
+  admin-configurable in this release — a reasonable future extension point, not required now.
+- `AuthController::register()`'s validation chain gained four checks, each with its own typed
+  error code, in this order: honeypot (`bot_detected`, `422` — a hidden, off-screen-not-
+  `display:none` field a bot filling every field would trip, but no legitimate keyboard/screen-
+  reader user ever could, via `aria-hidden`/`tabIndex={-1}`), timing (`bot_detected`, `422` —
+  `formRenderedAt`, captured once when the frontend's registration form first renders, must be at
+  least `REGISTRATION_MIN_FORM_SECONDS` seconds old), per-IP rate limit
+  (`too_many_attempts`, `429`, mirroring login's error code for the analogous case), and
+  disposable-email-domain (`disposable_email`, `422`). Existing checks (email format, password
+  length, email uniqueness) run last, unchanged. Every registration POST is recorded via
+  `RegistrationAttemptRepository::record()` regardless of which check (if any) ultimately rejects
+  it, mirroring `login_attempts`' "record everything" pattern — a bot retrying past the honeypot
+  or timing check still counts toward the throttle. The count used for a given request's own
+  threshold decision is read *before* that request's own row is recorded, avoiding an off-by-one.
+
+**Explicit decision: no third-party CAPTCHA (no Cloudflare Turnstile, reCAPTCHA, or hCaptcha) in
+this release.** This was the one genuinely open question in the originating plan, deliberately
+left to the user's judgment — but since the `AskUserQuestion` tool was unavailable to the
+coordinator in the run that produced this change, the coordinator adopted the analyser's own
+well-reasoned recommendation (ship the no-dependency stack above; revisit CAPTCHA only if spam
+signups persist in practice against the deployed app) rather than blocking indefinitely. This is
+recorded here explicitly, flagged as **revisitable** — it was resolved by the coordinator
+adopting a recommendation, not by direct user confirmation, and should be revisited if bot
+signups turn out to still reach the admin-approval queue in practice.
+
 ## Resolved architecture questions
 
 Full rationale for each of these lives in the phase section referenced; this list is a fast index
@@ -693,7 +828,7 @@ of the decision itself, not a repeat of the "why."
   since account mode now persists that preview permanently server-side (Phase 3).
 - Shared-hosting deploy uses a two-tier sibling-directory shape (backend project entirely outside
   the domain's docroot), not a merged single-webroot-plus-`.htaccess`-deny shape (Phase 4);
-  the mechanism is generic Apache/PHP/MySQL, not Dreamhost-proprietary.
+  the mechanism is generic Apache/PHP/MySQL, with no dependency on any particular hosting provider.
 - `config.php` is additive to `.env`, checked first by `Config::load()` when present, never
   replacing the native-dev/Docker paths (Phase 4).
 - `vendor/` is never committed — always built locally (or via the documented Docker/SSH fallback)
@@ -714,3 +849,21 @@ of the decision itself, not a repeat of the "why."
   calendar-axis drill-down layer, rather than rebuilding it from scratch (Phase 5).
 - The activation/disable "notification email" reuses the account's existing login email — there is
   no separate schema column for it (Phase 5).
+- `deploy/dreamhost/` was renamed to `deploy/shared-hosting/`; the mechanism was always generic
+  Apache/PHP/MySQL, never provider-proprietary (Phase 6).
+- Deploy automation is opt-in and key-auth-only via a gitignored `deploy.config.json`; password-based
+  automation is deliberately never implemented, with an always-available numbered manual fallback
+  (Phase 6).
+- The `StatusPanel`/`MapStyleToggle` on-map overlap was fixed architecturally, via a two-region
+  map+side-panel layout, not by nudging offsets (Phase 6).
+- The map gained `minZoom`/`maxBounds`/`noWrap` to prevent low-zoom world-repeat, without touching
+  `maxZoom` or the Treasure Map zoom-cap decision (Phase 3, unaffected) (Phase 6).
+- Countries-visited resolution is fully client-side/offline (bundled country-boundary GeoJSON +
+  hand-rolled point-in-polygon), not the existing `GET /api/geocode`/Nominatim path — required to
+  preserve guest mode's GPS-never-leaves-the-device guarantee and to work identically in guest,
+  account, and share-view contexts (Phase 6).
+- Registration anti-spam is a no-dependency stack (honeypot + timing check + per-IP rate limit +
+  disposable-domain blocklist), mirroring the existing login-rate-limit pattern; **no third-party
+  CAPTCHA was implemented**, a decision resolved by the coordinator adopting the analyser's
+  recommendation (`AskUserQuestion` was unavailable), explicitly flagged as revisitable if spam
+  persists in practice (Phase 6).

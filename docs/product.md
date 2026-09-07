@@ -24,9 +24,13 @@ Photomap has two modes, both fully implemented and wired together as of Phase 3:
   duration of an authenticated session, distinct from the guest-mode privacy note.
 
 Both modes share the same map/timeline UI, the same filter/search and drag-to-reassign
-features, and the same choice of two basemap styles (Detailed / Treasure Map — see below). A
-public `/share/{token}` route lets a link recipient view a read-only version of an account's map
-with no login and no upload/delete affordances.
+features, the same choice of two basemap styles (Detailed / Treasure Map — see below), and the
+same "Countries visited" panel (see below). A public `/share/{token}` route lets a link
+recipient view a read-only version of an account's map with no login and no upload/delete
+affordances. The map takes up the large majority of the screen, with the status panel,
+unlocated-photos panel, and countries-visited panel living in a dedicated side column next to
+it rather than floating over the map — only the basemap-style toggle and the folder-select
+button remain as small on-map overlay controls, in opposite corners.
 
 As of v1.0.0, registration is no longer self-service-to-upload: a new account can log in and use
 the app immediately, but **cannot upload until an admin activates it**. A secret `/admin` console
@@ -100,7 +104,11 @@ data lives and comes from.
   address that receives activation/disable notifications (no separate notification-email field
   exists); and Guest Mode uploads nothing, so photos taken while not logged in can't be shared
   with anyone. Only explicitly acknowledging this popup creates the account. Registering also
-  sends a notification email to a configurable admin address, prompting review.
+  sends a notification email to a configurable admin address, prompting review. Registration is
+  also hardened against automated/bot signups (an invisible honeypot field, a minimum-elapsed-
+  time check, a per-network attempt limit, and a blocklist of well-known disposable email
+  domains) before a submission ever reaches the admin-approval queue described below — no
+  third-party CAPTCHA is used for this.
 - **Admin approval gate**: a newly-registered account is created in a `pending` state. A pending
   account can log in, browse, and use every feature of the app **except uploading** — an upload
   attempt is rejected until an admin activates the account from the `/admin` console (see "Admin
@@ -203,6 +211,16 @@ range differ:
 The chosen style persists per-browser (`localStorage`) only; it does not sync across devices for
 an account, unlike photo data itself.
 
+## Countries visited
+
+A collapsible panel, in the same side column as the status panel, lists every country a photo
+was taken in, alongside the distinct month/year(s) photos exist for that country (e.g. "France —
+Jun 2019, Aug 2021"). Which country a photo belongs to is resolved entirely on-device, by
+checking each photo's GPS coordinates against a bundled world-country-boundary dataset — no
+coordinates are ever sent to a server to compute this, in either mode, so it works identically in
+guest mode, account mode, and the public share view. Photos with no usable GPS simply don't
+contribute an entry.
+
 ## Deployment and privacy, at a glance
 
 - The frontend builds to a **static-only** artifact (`npm run build` → `dist/`, plus a runtime
@@ -213,19 +231,19 @@ an account, unlike photo data itself.
   stack (MySQL + backend + frontend behind nginx) locally for anyone who doesn't want to install
   anything but Docker — clearly documented as a local-use convenience, distinct from a real
   production deployment.
-- **Shared-hosting deployment (e.g. Dreamhost) is now a first-class, documented path**, not just
-  a theoretical "any plain PHP+MySQL host will do" claim. A user with a Dreamhost-style account
-  (one Apache-mapped directory per domain, no reverse proxy they control) can deploy the whole
-  app by: building/packaging locally (`backend/scripts/package-for-deploy.sh`, which runs the
+- **Shared-hosting deployment is a first-class, documented path**, not just a theoretical "any
+  plain PHP+MySQL host will do" claim. A user with a typical shared-hosting account (one
+  Apache-mapped directory per domain, no reverse proxy they control) can deploy the whole app
+  by: building/packaging locally (`backend/scripts/package-for-deploy.sh`, which runs the
   frontend build and a production `composer install` and assembles a ready-to-upload two-part
-  `release/` directory), uploading the two resulting directories over SFTP, filling in one
-  `config.php` file with their Dreamhost-provided database host/name/user/password and an app
-  secret, and running the migration script once. No manual `.htaccess` authoring, no manual
+  `release/` directory), uploading the two resulting directories over SFTP (or automatically via
+  `npm run deploy`, key-auth SSH only — see `backend/scripts/deploy.sh`), filling in one
+  `config.php` file with their host-provided database host/name/user/password and an app secret,
+  and running the migration script once. No manual `.htaccess` authoring, no manual
   directory-layout decisions, and no separate frontend/backend hosting slots are required — the
-  root and backend READMEs document this end-to-end as "Deploying to Dreamhost (shared hosting)."
-  The underlying mechanism is generic single-directory Apache/PHP/MySQL shared hosting, not
-  Dreamhost-proprietary; Dreamhost is used as the concrete, worked example because that's the
-  host the user actually has.
+  root and backend READMEs document this end-to-end as "Deploying to a shared host (Apache + PHP
+  + MySQL)." The underlying mechanism is generic single-directory Apache/PHP/MySQL shared
+  hosting, with no dependency on or naming of any particular hosting provider.
 - Account-mode photo storage remains private: files live outside the backend's web root, under
   randomized filenames, served only via short-lived HMAC-signed URLs. On a shared-hosting deploy
   this now extends to the entire backend source tree, not just the storage directory — the whole
@@ -240,8 +258,8 @@ an account, unlike photo data itself.
   dev, Docker — unchanged) or a hand-edited `config.php` returning a plain PHP array (shared
   hosting), which take precedence over `.env` when present but never coexist with it in normal
   use. The frontend's post-build API base URL is still a plain runtime `config.js` file. All of
-  this is documented in one consolidated root README, plus a Dreamhost-specific section in both
-  READMEs.
+  this is documented in one consolidated root README, plus a shared-hosting-specific section in
+  both READMEs.
 
 ## Not yet built
 - **Trip auto-grouping, route lines between nearby-in-time photos, GeoJSON/KML export, and a

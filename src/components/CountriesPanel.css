@@ -1,0 +1,36 @@
+.countries-panel {
+  border-top: 1px solid #ddd;
+  background: #fafafa;
+  font-size: 0.85rem;
+}
+
+.countries-panel__toggle {
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.8rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.countries-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.8rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.countries-panel__item {
+  line-height: 1.3;
+}
+
+.countries-panel__country {
+  font-weight: 600;
+}
+
+.countries-panel__dates {
+  color: #555;
+}

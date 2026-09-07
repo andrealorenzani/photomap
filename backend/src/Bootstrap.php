@@ -23,10 +23,12 @@ use Photomap\Backend\Repositories\AppSettingsRepository;
 use Photomap\Backend\Repositories\GeocodeCacheRepository;
 use Photomap\Backend\Repositories\LoginAttemptRepository;
 use Photomap\Backend\Repositories\PhotoRepository;
+use Photomap\Backend\Repositories\RegistrationAttemptRepository;
 use Photomap\Backend\Repositories\ShareLinkRepository;
 use Photomap\Backend\Repositories\UserRepository;
 use Photomap\Backend\Routing\Router;
 use Photomap\Backend\Services\AppSettingsService;
+use Photomap\Backend\Services\DisposableEmailDomainList;
 use Photomap\Backend\Services\FileValidator;
 use Photomap\Backend\Services\GeocodeClientInterface;
 use Photomap\Backend\Services\ImageProcessor;
@@ -57,6 +59,9 @@ final class Bootstrap
         $nominatimMinInterval = (float) Config::get('NOMINATIM_MIN_INTERVAL_SECONDS', '1');
         $rateLimitMax = Config::getInt('RATE_LIMIT_LOGIN_MAX_ATTEMPTS', 5);
         $rateLimitWindow = Config::getInt('RATE_LIMIT_LOGIN_WINDOW_SECONDS', 900);
+        $registrationRateLimitMax = Config::getInt('RATE_LIMIT_REGISTRATION_MAX_ATTEMPTS', 5);
+        $registrationRateLimitWindow = Config::getInt('RATE_LIMIT_REGISTRATION_WINDOW_SECONDS', 3600);
+        $registrationMinFormSeconds = Config::getInt('REGISTRATION_MIN_FORM_SECONDS', 2);
         $mailFromAddress = Config::get('MAIL_FROM_ADDRESS', 'no-reply@example.com');
         $mailFromName = Config::get('MAIL_FROM_NAME', 'Photomap');
         $adminNotifyEmail = Config::get('ADMIN_NOTIFY_EMAIL');
@@ -66,6 +71,8 @@ final class Bootstrap
         $shareLinks = new ShareLinkRepository($pdo);
         $geocodeCache = new GeocodeCacheRepository($pdo);
         $loginAttempts = new LoginAttemptRepository($pdo);
+        $registrationAttempts = new RegistrationAttemptRepository($pdo);
+        $disposableEmailDomains = new DisposableEmailDomainList();
         $appSettingsRepository = new AppSettingsRepository($pdo);
 
         $fileValidator = new FileValidator();
@@ -79,7 +86,17 @@ final class Bootstrap
         $client = $geocodeClient ?? new NominatimClient($nominatimUserAgent ?? 'Photomap/1.0');
         $mailerInstance = $mailer ?? self::resolveDefaultMailer($mailFromAddress, $mailFromName);
 
-        $authController = new AuthController($users, $rateLimiter, $mailerInstance, $adminNotifyEmail);
+        $authController = new AuthController(
+            $users,
+            $rateLimiter,
+            $mailerInstance,
+            $registrationAttempts,
+            $disposableEmailDomains,
+            $adminNotifyEmail,
+            $registrationRateLimitMax,
+            $registrationRateLimitWindow,
+            $registrationMinFormSeconds
+        );
         $accountController = new AccountController($pdo, $users, $photos, $storagePath);
         $photosController = new PhotosController(
             $photos,

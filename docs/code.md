@@ -8,8 +8,11 @@ frontend has no build-time dependency on the backend and vice versa. As of v1.0.
 also include a registration-approval/admin-console feature set (a separate `/admin` frontend page
 and a separate `/api/admin/*` backend API, both structurally isolated from the main
 user-facing app/API), GPS-required account-mode uploads, and a calendar-axis drill-down layer on
-the timeline. This document covers the frontend project first, then the backend project, then the
-root-level Docker/deployment tooling that spans both.
+the timeline. As of this change (Phase 6), the deploy tooling is de-branded and gained an opt-in
+automated upload path, the frontend gained a map-dominant two-region layout (fixing a real
+`StatusPanel`/`MapStyleToggle` overlap) and an offline countries-visited feature, and the backend
+gained registration anti-spam hardening. This document covers the frontend project first, then
+the backend project, then the root-level Docker/deployment tooling that spans both.
 
 # Frontend (guest mode + account mode)
 
@@ -83,7 +86,9 @@ src/
                                   credentials:'include', typed ApiError (distinguishes
                                   413 quota_exceeded/422 from generic failures)
       authApi.ts, photosApi.ts, shareLinksApi.ts, accountApi.ts, shareApi.ts
-                                  Thin per-resource wrappers over http.ts
+                                  Thin per-resource wrappers over http.ts; (Phase 6) authApi's
+                                  register() takes honeypot/formRenderedAt params, sent as
+                                  `website`/`formRenderedAt` in the POST /api/register body
       adminApi.ts                  Thin wrappers over http.ts for every /api/admin/* endpoint
                                   (login/logout/me, users list/activate/disable, settings
                                   get/update, stats)
@@ -117,6 +122,17 @@ src/
                                   lib/config.ts; localStorage load/save of the chosen style
     grouping.ts                   Latitude-corrected ~50m grid bucketing (gridKey,
                                   computeMarkerGroups)
+    countryLookup.ts               (Phase 6) loadCountryBoundaries() fetches/caches the bundled
+                                  public/data/countries-110m.geo.json once; findCountryForPoint()
+                                  is a hand-rolled ray-casting point-in-polygon test (Polygon/
+                                  MultiPolygon with holes), bounding-box-pre-checked per country
+                                  for performance — no new npm dependency, zero network calls
+                                  beyond the one-time bundled-asset fetch
+    countries.ts                   (Phase 6) computeCountryVisits() reuses computeMarkerGroups()
+                                  so one country lookup runs per marker group, not per photo;
+                                  dedups distinct {year, month} visits per country and returns a
+                                  country-name-sorted CountryVisit[]; formatVisitDate() for
+                                  display (e.g. "Jun 2019")
     timeline.ts                   Pure binning/domain/intensity/hit-testing logic for the
                                   timeline strip; plus (v1.0.0) computeYearBins/
                                   computeMonthBins/computeDayBins, yearsPresent, MONTH_LABELS,
@@ -147,7 +163,11 @@ src/
   components/
     TopBanner.tsx                 "Photomap" wordmark + login/register forms when logged out;
                                   account email + "copy share link" + "delete account" when
-                                  logged in
+                                  logged in; (Phase 6) the register form carries a hidden
+                                  off-screen honeypot field (`website`, aria-hidden, tabIndex=-1)
+                                  and captures `formRenderedAt` once per register-mode-entry
+                                  (not reset on keystrokes), both passed through to
+                                  authStore.register()
     AccountNotice.tsx              Persistent "you're logged in — photos are stored on the
                                   server" notice, visible for the whole authenticated session;
                                   mutually exclusive with PrivacyNote
@@ -165,6 +185,11 @@ src/
                                   writing to photoStore's searchFilters slice
     UnlocatedPhotosPanel.tsx       Panel of GPS-less photos, draggable onto the map to assign
                                   a location for the first time
+    CountriesPanel.tsx              (Phase 6) Collapsible panel (same toggle convention as
+                                  UnlocatedPhotosPanel) listing every country a photo was taken
+                                  in with its distinct visit month/year(s), computed via
+                                  lib/countries.ts's computeCountryVisits(); mounted in App.tsx's
+                                  side region and in SharePage.tsx
     MapView.tsx                    Imperative Leaflet + markercluster integration; plain-DOM
                                   marker popups with delete buttons; draggable markers +
                                   map-container drop target funneling into reassignLocation();
@@ -211,6 +236,13 @@ src/
                                   entirely separate from photoStore/authStore, mirroring
                                   SharePage's separation pattern
   main.tsx, App.tsx, App.css, index.css, vite-env.d.ts
+                                  (Phase 6) App.tsx/App.css restructured into a two-region
+                                  flex layout: `.app__map-region` (the map, `flex: 3`) and
+                                  `.app__side-region` (`flex: 0 0 300px`, normal document flow)
+                                  holding StatusPanel/UnlocatedPhotosPanel/CountriesPanel —
+                                  replacing the previous flat flow where StatusPanel was an
+                                  absolutely-positioned overlay child sharing MapStyleToggle's
+                                  corner (see docs/architecture.md's Phase 6 section)
 test/
   fixtures/                      Real sample JPEGs (and one HEIC) with deliberate EXIF
                                   characteristics — see "Testing" below
@@ -218,7 +250,11 @@ test/
 public/                          Static assets served as-is by Vite, including config.js
                                   (window.__PHOTOMAP_CONFIG__ runtime override for apiBaseUrl/
                                   map settings — a plain file, editable post-build with no
-                                  rebuild)
+                                  rebuild), and (Phase 6) data/countries-110m.geo.json —
+                                  bundled Natural Earth 1:110m country boundaries (trimmed to
+                                  {name, geometry} per feature, ~250KB, 177 countries) backing
+                                  the countries-visited feature; confirmed present in
+                                  `npm run build`'s dist/ output
 index.html, vite.config.ts, tsconfig.json, package.json, .env.example, .gitignore, README.md
 docker/                          Root whole-stack Docker build context: frontend/Dockerfile
                                   (multi-stage node:20-alpine build -> nginx:alpine serve),
@@ -299,8 +335,8 @@ integers, not the client-generated stable hash (see "id reconciliation" above).
 ## Testing
 
 Vitest (jsdom environment) + Testing Library for React component tests. Run via `npm test`
-(single run) or `npm run test:watch`. As of this change (v1.0.0): **24 test files, 173 tests, all
-passing** (up from 19 files / 135 tests before this change).
+(single run) or `npm run test:watch`. As of this change (Phase 6): **28 test files, 193 tests, all
+passing** (up from 24 files / 173 tests as of v1.0.0).
 
 Fixtures (`test/fixtures/`) are real sample images with deliberately varied EXIF: GPS +
 datetime; datetime-only/no GPS; GPS without an offset-time tag; a HEIC sample; a corrupted/
@@ -327,18 +363,31 @@ this is a map of what's covered, not a file-by-file index):
   shared HTTP client's CSRF-once-per-session/`credentials:'include'`/typed `ApiError` (413/422)
   behavior.
 - **Components/pages**: map view (tile-layer switching, draggable markers, drop-target
-  reassignment, `readOnly` disabling both), drag-to-reassign optimistic-update/rollback in both
-  repository implementations, hand-rolled router matching (`/`, `/share/:token`, `/admin`,
-  trailing-slash/encoded-token cases), `SharePage` (renders from local component state only —
-  asserts the global store's `photos.size` stays 0 throughout — plus `readOnly` behavior),
-  thumbnail strip/full-size viewer/status panel/privacy note/`TopBanner` states, the
-  registration-notice modal gate and "Discarded (No GPS)" label, the `gps_required`-triggered
-  notice, and the timeline's `density|year|month|day` drill-down navigation with breadcrumbs/axis
-  labels.
+  reassignment, `readOnly` disabling both, and — Phase 6 — the `minZoom`/`maxBounds`/
+  `maxBoundsViscosity`/`noWrap` world-repeat-prevention options passed to Leaflet), drag-to-
+  reassign optimistic-update/rollback in both repository implementations, hand-rolled router
+  matching (`/`, `/share/:token`, `/admin`, trailing-slash/encoded-token cases), `SharePage`
+  (renders from local component state only — asserts the global store's `photos.size` stays 0
+  throughout — plus `readOnly` behavior), thumbnail strip/full-size viewer/status panel/privacy
+  note/`TopBanner` states, the registration-notice modal gate and "Discarded (No GPS)" label, the
+  `gps_required`-triggered notice, the timeline's `density|year|month|day` drill-down navigation
+  with breadcrumbs/axis labels, and (Phase 6) a dedicated layout test confirming `StatusPanel` is
+  no longer inside the map's absolute-overlay DOM subtree and lives in the new side region
+  instead.
 - **Admin console** (v1.0.0): pure helper coverage (query building, sort-state cycling, share-link
   status formatting as existence+timestamp only never a URL, status labels, byte formatting),
   login gate + Users/Settings tab switching, search/filter/sort/pagination, and
   activate-with-quota/disable-with-confirmation flows.
+- **Countries-visited** (Phase 6): `countryLookup.test.ts` resolves known landmark coordinates
+  (Eiffel Tower, Tokyo, NYC, Sydney, Rome) against the real bundled GeoJSON asset, a mid-ocean
+  null case, and coastal near-border cases (Nice/France vs. Italy, Vancouver/Canada vs. the US);
+  `countries.test.ts` covers `computeCountryVisits()`'s grouping/dedup/multi-country-sort logic
+  with synthetic fixtures; `countriesPanel.test.tsx` covers render/toggle behavior.
+- **Registration anti-spam** (Phase 6, frontend side): `TopBanner`'s honeypot field is asserted
+  genuinely inaccessible via keyboard/assistive-tech (never reachable via `getByRole('textbox')`,
+  `tabIndex=-1`, `aria-hidden`), and `formRenderedAt` is asserted to be captured once per
+  register-mode-entry (unaffected by subsequent keystrokes) and forwarded through
+  `authStore.register()`/`authApi.register()` unchanged.
 
 Not practical to automate in this environment, left as a manual checklist instead: real
 cross-browser drag-and-drop/folder-picker behavior, Leaflet map bounds-fitting in a live
@@ -375,7 +424,7 @@ the full API table, the CORS/cross-origin-cookie section, and a copy-pasteable c
 Other scripts:
 
 ```bash
-composer test               # phpunit — 166 tests, 440 assertions
+composer test               # phpunit — 180 tests, 481 assertions
 bash scripts/smoke-test.sh http://localhost:8000   # runnable curl walkthrough (requires curl, jq)
 bash scripts/package-for-deploy.sh          # assembles a release/ artifact for shared-hosting deploy
 ```
@@ -404,7 +453,7 @@ backend/
                                     CorsMiddleware runs first, before Session::start()
   src/
     Config.php                     Reads/validates settings; checks for a root-level config.php
-                                    first (shared-hosting/Dreamhost deploy path — a plain PHP
+                                    first (shared-hosting deploy path — a plain PHP
                                     file returning an associative array, values populate
                                     $_ENV/putenv()), falling back to the pre-existing .env/
                                     phpdotenv behavior when no config.php exists; throws if
@@ -442,7 +491,11 @@ backend/
                                     ADMIN_USERNAME/ADMIN_PASSWORD_HASH are unset, 401 otherwise
     Controllers/
       AuthController.php           register (inserts status='pending', best-effort emails
-                                    ADMIN_NOTIFY_EMAIL — v1.0.0), login, logout, csrfToken, me
+                                    ADMIN_NOTIFY_EMAIL — v1.0.0; Phase 6: validation chain gains
+                                    honeypot -> timing -> per-IP-rate-limit -> disposable-domain
+                                    checks, each its own error code, before the pre-existing
+                                    email-format/password-length/uniqueness checks), login,
+                                    logout, csrfToken, me
       AccountController.php        DELETE /api/account (transactional row+file cascade delete)
       PhotosController.php         index, store (upload pipeline; v1.0.0: rejects with
                                     422 gps_required if the photo has no usable GPS, for
@@ -469,6 +522,10 @@ backend/
       findActiveCreatedAtForUser() — selects only `created_at`, never `token`, so the raw
       share URL is structurally unreachable from the admin code path
       AppSettingsRepository.php    (v1.0.0) Reads/writes the singleton app_settings row
+      RegistrationAttemptRepository.php  (Phase 6) countRecentByIp()/record() against
+                                    registration_attempts — mirrors LoginAttemptRepository's
+                                    shape but records every POST regardless of outcome (no
+                                    "succeeded" concept to filter on)
     Services/
       ImageProcessor.php           GD: EXIF-orient, resize <=2000px q85, thumbnail 320px q80,
                                     no-upscale, alpha-flatten-to-JPEG, corrupt-image rejection
@@ -497,6 +554,10 @@ backend/
       PhpMailMailer.php            (v1.0.0) Production implementation, PHP's mail(); every call
                                     site wraps sends in catch-and-log, never blocking the
                                     triggering action
+      DisposableEmailDomainList.php  (Phase 6) Static, hardcoded list of ~50 well-known
+                                    disposable-email domains; isDisposable() matches
+                                    case-insensitively, including subdomains; not
+                                    admin-configurable in this release
   storage/                          OUTSIDE public/, never web-reachable
     photos/{user_id}/{random32hex}.jpg
     thumbnails/{user_id}/{random32hex}.jpg
@@ -505,7 +566,9 @@ backend/
     0004_create_geocode_cache.sql, 0005_create_login_attempts.sql,
     0006_create_nominatim_rate_limit.sql, 0007_add_user_status_and_quota.sql (adds
     users.status/storage_quota_bytes/approved_at, grandfathers pre-existing rows to 'active'),
-    0008_create_app_settings.sql (singleton app_settings row, seeded with a 100MB default)
+    0008_create_app_settings.sql (singleton app_settings row, seeded with a 100MB default),
+    0009_add_registration_attempts.sql (Phase 6 — registration_attempts table, indexed on
+    (ip_address, created_at))
   scripts/
     migrate.php                    CLI runner; idempotent, tracks applied filenames in a
                                     schema_migrations table it creates automatically
@@ -517,13 +580,22 @@ backend/
                                     migrations/, scripts/, fresh vendor/, composer.json/.lock,
                                     .htaccess, config.php/.example, storage dirs — excludes
                                     tests/, docker/, .env*, docker-compose.yml, phpunit.xml) and
-                                    release/domain.com/ (frontend dist/ + the Dreamhost
-                                    .htaccess/api/index.php stub); includes a hardcoded-path/URL
-                                    grep sweep as a warning
+                                    release/domain.com/ (frontend dist/ + the shared-hosting
+                                    .htaccess/api/index.php stub from deploy/shared-hosting/);
+                                    includes a hardcoded-path/URL grep sweep as a warning
+    deploy.sh                       (Phase 6) Runs package-for-deploy.sh, then either automates
+                                    upload+migrate over SSH (rsync, falling back to scp) when a
+                                    fully-configured, key-auth-only deploy.config.json is present
+                                    at the repo root (auto-chmod 600'd), or prints a concrete
+                                    numbered manual fallback checklist; password-based automation
+                                    is deliberately never attempted — reachable as `npm run deploy`
   config.php.example                Template array of every setting .env.example documents, with
-                                    Dreamhost-specific inline guidance (DB host convention,
+                                    shared-hosting-specific inline guidance (DB host convention,
                                     HTTPS/APP_ENV ordering pitfall, same-origin CORS/cookie
-                                    defaults); copy to config.php and fill in real values
+                                    defaults) and (Phase 6) RATE_LIMIT_REGISTRATION_MAX_ATTEMPTS/
+                                    RATE_LIMIT_REGISTRATION_WINDOW_SECONDS/
+                                    REGISTRATION_MIN_FORM_SECONDS; copy to config.php and fill in
+                                    real values
   .htaccess                         Deny-all (Require all denied, Apache 2.2 fallback) shipped
                                     inside backend/ itself — defense-in-depth against
                                     mod_userdir-style exposure of the private backend directory
@@ -536,14 +608,19 @@ backend/
                                     NominatimClient, NominatimRateLimiter, RateLimiter, SignedUrl,
                                     StorageQuotaService, Config (config.php/.env precedence),
                                     AdminAuthController (v1.0.0), MailNotifications (v1.0.0),
-                                    UserRepository (v1.0.0) — see "Testing" below
+                                    UserRepository (v1.0.0), DisposableEmailDomainList (Phase 6 —
+                                    case-insensitivity, subdomain matching, non-disposable
+                                    domains) — see "Testing" below
     Feature/                       Auth, Cors, Csrf, Geocode, Ownership, Photos, PhotoUpdate,
                                     ProductionCookie, Quota, RateLimit, SecurityFeature,
                                     ShareLinks, AdminAuth (v1.0.0), AdminUsers (v1.0.0 — includes
                                     a dedicated test asserting the share-link indicator is
                                     existence-only, never the raw token), GpsRequired (v1.0.0),
-                                    RegistrationApproval (v1.0.0) — each boots a real `php -S`
-                                    subprocess and drives it over real HTTP
+                                    RegistrationApproval (v1.0.0), RegistrationHardening
+                                    (Phase 6 — honeypot/timing/per-IP-rate-limit/disposable-domain
+                                    checks plus a control-case success, run with its own tightened
+                                    envOverrides()) — each boots a real `php -S` subprocess and
+                                    drives it over real HTTP
     Support/                       ServerProcess (subprocess lifecycle; its .env.test quote-
                                     stripping parser was fixed in v1.0.0 to handle single-quoted
                                     values, not just double-quoted), HttpClient/HttpResponse
@@ -555,9 +632,17 @@ backend/
                                     (v1.0.0 — MAIL_TRANSPORT=fake test doubles for MailerInterface)
   composer.json, composer.lock
   .env.example, .env.test, .gitignore   .env.example documents CORS_ALLOWED_ORIGINS,
-                                    SESSION_COOKIE_SAMESITE, and (v1.0.0) ADMIN_USERNAME/
-                                    ADMIN_PASSWORD_HASH/ADMIN_NOTIFY_EMAIL/MAIL_* settings, with
-                                    inline admin-hash-generation instructions
+                                    SESSION_COOKIE_SAMESITE, (v1.0.0) ADMIN_USERNAME/
+                                    ADMIN_PASSWORD_HASH/ADMIN_NOTIFY_EMAIL/MAIL_* settings (with
+                                    inline admin-hash-generation instructions), and (Phase 6)
+                                    RATE_LIMIT_REGISTRATION_MAX_ATTEMPTS/
+                                    RATE_LIMIT_REGISTRATION_WINDOW_SECONDS/
+                                    REGISTRATION_MIN_FORM_SECONDS. .env.test deliberately loosens
+                                    the registration rate-limit/timing defaults (effectively
+                                    unlimited attempts, timing check disabled) since dozens of
+                                    unrelated test classes register accounts as ordinary setup —
+                                    RegistrationHardeningFeatureTest overrides these back to tight
+                                    values via its own envOverrides()
   README.md                        Standalone run instructions, API table (including PATCH and
                                     the /api/admin/* routes), CORS/cross-origin-cookie section,
                                     curl walkthrough, and an "Admin console" section with a
@@ -587,6 +672,9 @@ backend/
 - `app_settings` (v1.0.0) — a singleton row (`id` fixed to `1` via a `CHECK` constraint):
   `default_storage_quota_bytes`, `uploads_enabled`, `updated_at`. Seeded by migration 0008 with a
   100MB default and uploads enabled.
+- `registration_attempts` (Phase 6) — id, `ip_address`, `created_at`; indexed on
+  `(ip_address, created_at)`. A dedicated table, not a reuse of `login_attempts` — every
+  registration POST is recorded regardless of outcome (no "succeeded" concept to filter on).
 
 File paths are `SELECT`ed inside the same transaction as a DB delete, and files are `unlink()`'d
 only after the transaction commits. `PATCH /api/photos/{id}` never touches file paths — it writes
@@ -628,13 +716,16 @@ only `lat`/`lon`.
   genuine MySQL deadlock (SQLSTATE `40001`), verified with repeated runs of a dedicated
   multi-process concurrency test; this is a robustness fix made during this change's own test
   audit, not a change in the quota's semantics.
+- (Phase 6) No third-party CAPTCHA is implemented for registration — a deliberate decision (see
+  `docs/architecture.md`'s Phase 6 section), revisitable if spam signups persist in practice.
+  `DisposableEmailDomainList` is a hardcoded, static list, not wired into the admin
+  settings UI/API in this release.
 
 ## Testing
 
-PHPUnit 10. Run via `composer test` from `backend/`. As of this change (v1.0.0): **166 tests, 440
-assertions, 0 failures**, confirmed deterministic across multiple independent clean runs via
-Docker (MySQL + php:8.3) — up from 117 tests / 274 assertions (53 Unit + 64 Feature) before this
-change.
+PHPUnit 10. Run via `composer test` from `backend/`. As of this change (Phase 6): **180 tests, 481
+assertions, 0 failures** (81 Unit + 99 Feature), confirmed deterministic across independent clean
+runs via Docker (MySQL + php:8.3) — up from 173 tests / 456 assertions as of v1.0.0.
 
 - **Unit tests** (`tests/Unit/`): CSRF token comparison logic; image resize/EXIF-orientation/
   no-upscale/corrupt-image-rejection behavior; finfo-based file-type sniffing; quota math
@@ -650,8 +741,10 @@ change.
   picking up `config.php`-sourced real test-DB credentials; **(v1.0.0) `AdminAuthControllerTest`**
   (password_verify() success/failure, timing-safe dummy-hash comparison on username mismatch),
   **`MailNotificationsTest`** (registration/activation/disable emails sent via the fake mailer,
-  including a failing-mailer case proving the triggering action still succeeds), and
-  **`UserRepositoryTest`** (status/quota/search/sort/filter/count queries).
+  including a failing-mailer case proving the triggering action still succeeds),
+  **`UserRepositoryTest`** (status/quota/search/sort/filter/count queries), and
+  **(Phase 6) `DisposableEmailDomainListTest`** (case-insensitivity, subdomain matching,
+  non-disposable domains passing through, malformed-email handling).
 - **Feature tests** (`tests/Feature/`): each test class boots a real `php -S` subprocess
   (`tests/Support/ServerProcess.php`) and drives it over real HTTP via curl
   (`tests/Support/HttpClient.php`). Covers auth flows (register/login/logout/me), CSRF
@@ -674,7 +767,12 @@ change.
   (account-mode upload with no GPS rejected with `422 gps_required`), and
   **`RegistrationApprovalFeatureTest`** (a newly-registered account can log in but not upload
   until activated; a disabled account is blocked entirely; the migration-time grandfathering
-  behavior).
+  behavior), and **(Phase 6) `RegistrationHardeningFeatureTest`** (honeypot rejection, sub-
+  threshold-timing rejection including a missing-`formRenderedAt` case, per-IP throttle tripping
+  after N attempts then resetting after the window expires, every attempt recorded regardless of
+  outcome, disposable-domain rejection, and a control-case legitimate registration still
+  succeeding — run with its own tightened `envOverrides()` since the shared `.env.test` defaults
+  are deliberately loosened for the rest of the suite).
 - Not covered by the automated Feature tier: cache-hit/miss/rounding/rate-limiting-spacing
   behavior of `GET /api/geocode` against a live server, since the live server always wires the
   real `NominatimClient` and the plan requires never calling real Nominatim in tests — that
@@ -696,8 +794,8 @@ change.
   one HTTP client/cookie jar across two logged-in users, invalidating a CSRF token; and added
   `JSON_PRESERVE_ZERO_FRACTION` to `JsonResponse.php` globally (a pre-existing, unrelated latent
   bug newly exposed by round-number-coordinate test fixtures).
-- **Shared-hosting deploy verification** (new, on-demand tooling, not wired into default CI):
-  `deploy/dreamhost/verify-apache-routing.sh` runs a Docker-based `php:8.3-apache` container
+- **Shared-hosting deploy verification** (on-demand tooling, not wired into default CI):
+  `deploy/shared-hosting/verify-apache-routing.sh` runs a Docker-based `php:8.3-apache` container
   (`mod_rewrite` enabled, `AllowOverride All`) against a packaged `release/` artifact and checks
   SPA-root rendering, `/share/:token` SPA fallback, `/api/*` routing to PHP, direct static-asset
   serving, and directory-traversal blocking. A separate manual check pointed a plain Apache
@@ -735,15 +833,17 @@ of genuine production deployment: a split-origin plain PHP+MySQL host (`CORS_ALL
 shared-hosting deploy. See the root `README.md` for the full breakdown and the complete
 environment-variable reference tables for both the frontend and the backend.
 
-## Shared-hosting deployment tooling (`deploy/dreamhost/`, `backend/scripts/package-for-deploy.sh`)
+## Shared-hosting deployment tooling (`deploy/shared-hosting/`, `backend/scripts/package-for-deploy.sh`, `backend/scripts/deploy.sh`)
 
-New in this change: a generic single-directory Apache/PHP/MySQL shared-hosting deployment path
-(Dreamhost is the named, worked example in the docs, but nothing here is Dreamhost-proprietary).
-See `docs/architecture.md`'s "Phase 4" section for the full design (two-tier sibling-directory
-layout, `config.php`/`.env` precedence, `mod_userdir` mitigation).
+A generic single-directory Apache/PHP/MySQL shared-hosting deployment path, with no dependency on
+or naming of any particular hosting provider (the `deploy/dreamhost/` directory name from the
+phase that introduced this mechanism was itself renamed to `deploy/shared-hosting/` in Phase 6 —
+see `docs/architecture.md`'s "Phase 4" section for the full design (two-tier sibling-directory
+layout, `config.php`/`.env` precedence, `mod_userdir` mitigation) and its "Phase 6" section for
+the deploy-automation addition.
 
 ```
-deploy/dreamhost/
+deploy/shared-hosting/
   .htaccess                 Domain-docroot .htaccess: rewrites /api/* to api/index.php, falls
                              back to index.html for the SPA (client-side routing incl.
                              /share/:token), with a commented-out opt-in HTTPS redirect
@@ -754,15 +854,28 @@ deploy/dreamhost/
 
 backend/
   config.php.example        Template settings array (same keys as .env.example), with
-                             Dreamhost-specific inline guidance
+                             shared-hosting-specific inline guidance
   .htaccess                  Deny-all, ships inside backend/ itself as defense-in-depth against
                              mod_userdir-style exposure
   scripts/package-for-deploy.sh   Builds the frontend + a production vendor/, assembles a
                              curated release/photomap-backend/ + release/domain.com/ tree ready
                              to upload over SFTP
+  scripts/deploy.sh          (Phase 6) Runs package-for-deploy.sh, then automates upload+migrate
+                             over SSH (rsync, falling back to scp) when a fully-configured,
+                             key-auth-only deploy.config.json is present at the repo root
+                             (auto-chmod 600'd on discovery), else prints a concrete numbered
+                             manual fallback checklist; reachable as `npm run deploy`
+
+deploy.config.example.json   (Phase 6, repo root, committed) Template for deploy.config.json:
+                             sshHost/sshPort/sshUser/sshKeyPath/remoteBackendPath/
+                             remoteFrontendPath/remoteMigrateCommand/postDeployCommands
+deploy.config.json           (Phase 6, repo root, gitignored) Real values — never committed;
+                             password-based auth is deliberately never supported by the
+                             automated path
 ```
 
 `release/` (the packaging script's output directory) is gitignored at the repo root and is a
 transient build artifact, never committed. `backend/config.php` (the user's real, filled-in
 settings) is gitignored in `backend/.gitignore`, alongside the pre-existing `.env`/`.env.test`
-ignores.
+ignores. `deploy.config.json` (Phase 6) is gitignored at the repo root alongside `deploy.config.
+example.json`'s committed template.

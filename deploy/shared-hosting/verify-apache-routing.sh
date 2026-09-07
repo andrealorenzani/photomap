@@ -10,12 +10,13 @@
 # contract.
 #
 # This is intentionally NOT wired into `composer test`/`npm test` -- it needs Docker and is
-# slower/more infrastructure-heavy than the rest of the suite. Run it manually before a Dreamhost
-# deploy, or whenever routing-related files change (backend/.htaccess, deploy/dreamhost/*).
+# slower/more infrastructure-heavy than the rest of the suite. Run it manually before a
+# shared-hosting deploy, or whenever routing-related files change (backend/.htaccess,
+# deploy/shared-hosting/*).
 #
 # Usage:
 #   bash backend/scripts/package-for-deploy.sh   # first, to produce release/
-#   bash deploy/dreamhost/verify-apache-routing.sh
+#   bash deploy/shared-hosting/verify-apache-routing.sh
 #
 # Requires: docker, curl.
 

@@ -1,14 +1,13 @@
 .status-panel {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  z-index: 1000;
+  /* Normally-flowed block in the App's side region (see App.css's .app__side-region) --
+     no longer absolutely positioned over the map, which is what previously caused it to
+     overlap MapStyleToggle (both shared the map's top-right corner). */
+  margin: 0.75rem;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
   padding: 0.6rem 0.85rem;
   font-size: 0.8rem;
-  max-width: 260px;
 }
 
 .status-panel__counts {

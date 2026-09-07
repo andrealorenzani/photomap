@@ -16,7 +16,7 @@ final class Config
             return;
         }
 
-        // Shared-hosting (e.g. Dreamhost) deploy path: a hand-edited config.php returning an
+        // Shared-hosting deploy path: a hand-edited config.php returning an
         // associative array takes precedence over .env, when present. This lets a non-technical
         // deploy step be "edit one file" instead of requiring phpdotenv's .env parsing/format.
         // Purely additive: Docker and native/local dev never place a config.php next to .env, so
